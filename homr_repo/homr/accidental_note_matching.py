@@ -64,9 +64,28 @@ def get_accidental_modifier(acc_type: AccidentalType) -> str:
     return "unknown"
 
 
-def is_key_signature_accidental(acc_type: AccidentalType) -> bool:
-    """Check if this is a key signature accidental (persists through piece)."""
+def is_key_signature_accidental_by_type(acc_type: AccidentalType) -> bool:
+    """Check if this accidental TYPE indicates a key signature accidental."""
     return acc_type in [AccidentalType.KEY_SHARP, AccidentalType.KEY_FLAT, AccidentalType.KEY_NATURAL]
+
+
+def is_in_key_signature_area(acc_x: float, first_note_x: float, first_bar_x: float) -> bool:
+    """
+    Determine if an accidental is in the key signature area based on position.
+
+    Key signature area is BEFORE the first note AND before the first bar line.
+    Accidentals appearing after the first note are measure accidentals.
+
+    Args:
+        acc_x: X position of the accidental
+        first_note_x: X position of the first note on this staff (or inf if no notes)
+        first_bar_x: X position of the first bar line (or inf if no bar lines)
+
+    Returns:
+        True if accidental is in key signature area
+    """
+    # Key signature is before the first note and before the first bar line
+    return acc_x < first_note_x and acc_x < first_bar_x
 
 
 def match_accidentals_to_notes(
@@ -79,12 +98,16 @@ def match_accidentals_to_notes(
     Match accidentals to notes they affect based on pitch values.
 
     Rules:
-    1. Accidentals only affect notes AFTER them (to the right) in the measure
+    1. Accidentals only affect notes AFTER them (to the right)
     2. Accidentals affect the same note letter in ALL octaves
-    3. Regular accidentals reset at bar lines
-    4. Key signature accidentals persist through the piece (but can be cancelled by naturals)
+    3. KEY SIGNATURE accidentals (before first note) persist through that STAFF LINE only
+    4. MEASURE accidentals (after first note) ONLY affect notes in that measure - reset at bar lines!
     5. Naturals CANCEL previous accidentals - notes after a natural are NOT affected
        until another sharp/flat is seen
+
+    Key signature detection is POSITION-BASED:
+    - Accidentals appearing BEFORE the first note on the staff = key signature (persist through staff line)
+    - Accidentals appearing AFTER the first note = measure accidentals (reset at bar lines)
 
     Args:
         staffs: List of Staff objects with bar lines
@@ -97,7 +120,7 @@ def match_accidentals_to_notes(
     """
     matches = []
 
-    # Process each staff independently
+    # Process each staff independently - each staff line has its own key signature!
     for staff in staffs:
         # Get bar line X positions for this staff
         bar_lines = staff.get_bar_lines()
@@ -117,6 +140,16 @@ def match_accidentals_to_notes(
         staff_accidentals.sort(key=lambda a: a.center[0])
         staff_notes.sort(key=lambda n: n.center[0])
 
+        # Determine key signature area boundary for THIS staff line
+        # Key signature is BEFORE the first note and before the first bar line
+        first_note_x = float('inf')
+        if staff_notes:
+            first_note_x = staff_notes[0].center[0]
+
+        first_bar_x = float('inf')
+        if bar_x_positions:
+            first_bar_x = bar_x_positions[0]
+
         # Combine accidentals and notes into a single timeline, sorted by X
         # Each item is (x_position, 'acc' or 'note', object)
         timeline = []
@@ -126,8 +159,8 @@ def match_accidentals_to_notes(
             timeline.append((note.center[0], 'note', note))
         timeline.sort(key=lambda x: x[0])
 
-        # Track active effects per note letter
-        # key_effects: note_letter -> (AccidentalType, Accidental) - persists across measures
+        # Track active effects per note letter FOR THIS STAFF LINE ONLY
+        # key_effects: note_letter -> (AccidentalType, Accidental) - persists through this staff line
         # measure_effects: note_letter -> (AccidentalType, Accidental) - resets at bar lines
         # cancelled_letters: set of note letters that have been cancelled by naturals this measure
         key_effects: dict[str, tuple[AccidentalType, Accidental]] = {}
@@ -148,24 +181,34 @@ def match_accidentals_to_notes(
                 acc_pitch = acc.get_pitch_name(clef)
                 note_letter = extract_note_letter(acc_pitch)
 
-                if is_key_signature_accidental(acc.accidental_type):
-                    if acc.accidental_type == AccidentalType.KEY_NATURAL:
+                # Determine if this is a KEY SIGNATURE accidental based on POSITION
+                # Key signature = before first note AND before first bar line ON THIS STAFF
+                is_key_sig = is_in_key_signature_area(x_pos, first_note_x, first_bar_x)
+
+                # Also check the accidental type (YOLO may have classified it)
+                is_key_sig_type = is_key_signature_accidental_by_type(acc.accidental_type)
+
+                # Use position-based detection primarily, but also accept YOLO classification
+                if is_key_sig or is_key_sig_type:
+                    # This is a KEY SIGNATURE accidental - persists through THIS STAFF LINE
+                    if acc.accidental_type in [AccidentalType.NATURAL, AccidentalType.KEY_NATURAL]:
                         # Key natural cancels key signature effect
                         if note_letter in key_effects:
                             del key_effects[note_letter]
                     else:
-                        # Key sharp/flat - add to key effects
+                        # Key sharp/flat - add to key effects for this staff line
                         key_effects[note_letter] = (acc.accidental_type, acc)
                         # Also remove from cancelled set since we have a new accidental
                         cancelled_in_measure.discard(note_letter)
                 else:
+                    # This is a MEASURE accidental - only affects this measure, resets at bar line
                     if acc.accidental_type == AccidentalType.NATURAL:
                         # Natural cancels effects - add to cancelled set
                         if note_letter in measure_effects:
                             del measure_effects[note_letter]
                         cancelled_in_measure.add(note_letter)
                     else:
-                        # Sharp/flat - add to measure effects
+                        # Sharp/flat - add to measure effects (will reset at next bar line!)
                         measure_effects[note_letter] = (acc.accidental_type, acc)
                         # Remove from cancelled set since we have a new accidental
                         cancelled_in_measure.discard(note_letter)
