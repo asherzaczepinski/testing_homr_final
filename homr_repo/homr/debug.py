@@ -240,12 +240,17 @@ class Debug:
         staffs: list,
     ) -> None:
         """
-        Write visualization showing which notes are affected by which accidentals.
-        Draws lines connecting accidentals to their affected notes and circles affected notes.
+        Write visualizations showing which notes are affected by which accidentals.
+        Creates three files:
+        1. _accidental_effects.png - ellipses around affected notes (no lines)
+        2. _accidental_effects_lines.png - same but WITH connecting lines
+        3. _letter_labels.png - shows letter values for accidentals and notes
         """
         from homr.accidental_note_matching import (
             match_accidentals_to_notes,
             draw_accidental_note_connections,
+            draw_accidental_note_connections_with_lines,
+            draw_letter_labels_visualization,
             create_accidental_effects_summary,
         )
         from homr.model import Accidental, Note
@@ -257,12 +262,23 @@ class Debug:
         # Match accidentals to notes
         matches = match_accidentals_to_notes(staffs, acc_list, note_list)
 
-        # Draw visualization
+        # Draw visualization WITHOUT lines
         img = draw_accidental_note_connections(self.original_image, matches, staffs)
-
         filename = self.base_filename + "_accidental_effects.png"
         cv2.imwrite(filename, img)
         print(f"Saved accidental effects visualization: {filename}")
+
+        # Draw visualization WITH lines
+        img_with_lines = draw_accidental_note_connections_with_lines(self.original_image, matches, staffs)
+        filename_lines = self.base_filename + "_accidental_effects_lines.png"
+        cv2.imwrite(filename_lines, img_with_lines)
+        print(f"Saved accidental effects visualization (with lines): {filename_lines}")
+
+        # Draw letter labels visualization
+        img_letters = draw_letter_labels_visualization(self.original_image, acc_list, note_list, staffs)
+        filename_letters = self.base_filename + "_letter_labels.png"
+        cv2.imwrite(filename_letters, img_letters)
+        print(f"Saved letter labels visualization: {filename_letters}")
 
         # Print summary
         summary = create_accidental_effects_summary(matches)

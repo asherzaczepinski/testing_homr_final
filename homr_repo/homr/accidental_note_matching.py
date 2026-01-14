@@ -82,8 +82,9 @@ def match_accidentals_to_notes(
     1. Accidentals only affect notes AFTER them (to the right) in the measure
     2. Accidentals affect the same note letter in ALL octaves
     3. Regular accidentals reset at bar lines
-    4. Key signature accidentals persist through the piece
-    5. Naturals cancel previous accidentals for that note letter
+    4. Key signature accidentals persist through the piece (but can be cancelled by naturals)
+    5. Naturals CANCEL previous accidentals - notes after a natural are NOT affected
+       until another sharp/flat is seen
 
     Args:
         staffs: List of Staff objects with bar lines
@@ -116,110 +117,105 @@ def match_accidentals_to_notes(
         staff_accidentals.sort(key=lambda a: a.center[0])
         staff_notes.sort(key=lambda n: n.center[0])
 
-        # Track active accidentals: note_letter -> (AccidentalType, start_x)
-        # Key signature accidentals are tracked separately
-        key_signature_accidentals: dict[str, AccidentalType] = {}
-        measure_accidentals: dict[str, tuple[AccidentalType, float]] = {}
+        # Combine accidentals and notes into a single timeline, sorted by X
+        # Each item is (x_position, 'acc' or 'note', object)
+        timeline = []
+        for acc in staff_accidentals:
+            timeline.append((acc.center[0], 'acc', acc))
+        for note in staff_notes:
+            timeline.append((note.center[0], 'note', note))
+        timeline.sort(key=lambda x: x[0])
 
-        # Current bar line index
+        # Track active effects per note letter
+        # key_effects: note_letter -> (AccidentalType, Accidental) - persists across measures
+        # measure_effects: note_letter -> (AccidentalType, Accidental) - resets at bar lines
+        # cancelled_letters: set of note letters that have been cancelled by naturals this measure
+        key_effects: dict[str, tuple[AccidentalType, Accidental]] = {}
+        measure_effects: dict[str, tuple[AccidentalType, Accidental]] = {}
+        cancelled_in_measure: set[str] = set()  # Letters cancelled by naturals this measure
+
         current_bar_idx = 0
 
-        # Process accidentals from left to right
-        for acc in staff_accidentals:
-            acc_x = acc.center[0]
-            acc_pitch = acc.get_pitch_name(clef)
-            note_letter = extract_note_letter(acc_pitch)
-
-            # Check if we crossed a bar line (reset measure accidentals)
-            while current_bar_idx < len(bar_x_positions) and acc_x > bar_x_positions[current_bar_idx]:
-                measure_accidentals.clear()
+        for x_pos, item_type, obj in timeline:
+            # Check if we crossed a bar line (reset measure accidentals and cancellations)
+            while current_bar_idx < len(bar_x_positions) and x_pos > bar_x_positions[current_bar_idx]:
+                measure_effects.clear()
+                cancelled_in_measure.clear()
                 current_bar_idx += 1
 
-            # Handle key signature vs regular accidentals
-            if is_key_signature_accidental(acc.accidental_type):
-                if acc.accidental_type == AccidentalType.KEY_NATURAL:
-                    # Key natural cancels key signature for this note
-                    if note_letter in key_signature_accidentals:
-                        del key_signature_accidentals[note_letter]
+            if item_type == 'acc':
+                acc = obj
+                acc_pitch = acc.get_pitch_name(clef)
+                note_letter = extract_note_letter(acc_pitch)
+
+                if is_key_signature_accidental(acc.accidental_type):
+                    if acc.accidental_type == AccidentalType.KEY_NATURAL:
+                        # Key natural cancels key signature effect
+                        if note_letter in key_effects:
+                            del key_effects[note_letter]
+                    else:
+                        # Key sharp/flat - add to key effects
+                        key_effects[note_letter] = (acc.accidental_type, acc)
+                        # Also remove from cancelled set since we have a new accidental
+                        cancelled_in_measure.discard(note_letter)
                 else:
-                    key_signature_accidentals[note_letter] = acc.accidental_type
-            else:
-                if acc.accidental_type == AccidentalType.NATURAL:
-                    # Natural cancels both key signature and measure accidentals for this note
-                    if note_letter in measure_accidentals:
-                        del measure_accidentals[note_letter]
-                else:
-                    measure_accidentals[note_letter] = (acc.accidental_type, acc_x)
+                    if acc.accidental_type == AccidentalType.NATURAL:
+                        # Natural cancels effects - add to cancelled set
+                        if note_letter in measure_effects:
+                            del measure_effects[note_letter]
+                        cancelled_in_measure.add(note_letter)
+                    else:
+                        # Sharp/flat - add to measure effects
+                        measure_effects[note_letter] = (acc.accidental_type, acc)
+                        # Remove from cancelled set since we have a new accidental
+                        cancelled_in_measure.discard(note_letter)
 
-        # Reset for note matching pass
-        measure_accidentals.clear()
-        current_bar_idx = 0
-
-        # Track accidentals as we scan notes
-        for acc in staff_accidentals:
-            acc_x = acc.center[0]
-            acc_pitch = acc.get_pitch_name(clef)
-            note_letter = extract_note_letter(acc_pitch)
-
-            # Check if we crossed a bar line
-            while current_bar_idx < len(bar_x_positions) and acc_x > bar_x_positions[current_bar_idx]:
-                measure_accidentals.clear()
-                current_bar_idx += 1
-
-            # Update tracking
-            if is_key_signature_accidental(acc.accidental_type):
-                if acc.accidental_type == AccidentalType.KEY_NATURAL:
-                    if note_letter in key_signature_accidentals:
-                        del key_signature_accidentals[note_letter]
-                else:
-                    key_signature_accidentals[note_letter] = acc.accidental_type
-            else:
-                if acc.accidental_type == AccidentalType.NATURAL:
-                    if note_letter in measure_accidentals:
-                        del measure_accidentals[note_letter]
-                else:
-                    measure_accidentals[note_letter] = (acc.accidental_type, acc_x)
-
-            # Find notes affected by this accidental
-            for note in staff_notes:
-                note_x = note.center[0]
+            elif item_type == 'note':
+                note = obj
                 note_pitch = note.get_pitch_name(clef)
-                note_letter_from_note = extract_note_letter(note_pitch)
+                note_letter = extract_note_letter(note_pitch)
 
-                # Note must be AFTER the accidental
-                if note_x <= acc_x:
+                # Skip if this note letter has been cancelled by a natural this measure
+                if note_letter in cancelled_in_measure:
                     continue
 
-                # For key signature accidentals, affect all matching notes
-                # For measure accidentals, check if within same measure
-                if is_key_signature_accidental(acc.accidental_type):
-                    # Key signature affects all matching notes
-                    if note_letter_from_note == note_letter:
-                        match = AccidentalNoteMatch(
-                            accidental=acc,
-                            note=note,
-                            accidental_pitch=acc_pitch,
-                            note_pitch=note_pitch,
-                            note_letter=note_letter
-                        )
-                        matches.append(match)
-                else:
-                    # Measure accidental - check if in same measure
-                    # Find bar lines between accidental and note
-                    bars_between = [bx for bx in bar_x_positions if acc_x < bx < note_x]
+                # Check if this note is affected by an active accidental
+                active_acc = None
+                active_type = None
 
-                    if len(bars_between) == 0 and note_letter_from_note == note_letter:
-                        # Same measure and same note letter
-                        match = AccidentalNoteMatch(
-                            accidental=acc,
-                            note=note,
-                            accidental_pitch=acc_pitch,
-                            note_pitch=note_pitch,
-                            note_letter=note_letter
-                        )
-                        matches.append(match)
+                # Measure effects take precedence over key effects
+                if note_letter in measure_effects:
+                    active_type, active_acc = measure_effects[note_letter]
+                elif note_letter in key_effects:
+                    active_type, active_acc = key_effects[note_letter]
+
+                if active_acc is not None and active_type is not None:
+                    # This note is affected by an accidental
+                    match = AccidentalNoteMatch(
+                        accidental=active_acc,
+                        note=note,
+                        accidental_pitch=active_acc.get_pitch_name(clef),
+                        note_pitch=note_pitch,
+                        note_letter=note_letter
+                    )
+                    matches.append(match)
 
     return matches
+
+
+def get_accidental_color(acc_type: AccidentalType) -> tuple[int, int, int]:
+    """Get the color for an accidental type. Red for sharps, light blue for flats."""
+    # Red for sharps, light blue for flats
+    # Naturals don't get highlighted (return None handled by caller)
+    colors = {
+        AccidentalType.SHARP: (0, 0, 255),         # Red (BGR)
+        AccidentalType.FLAT: (255, 191, 0),        # Light blue (BGR)
+        AccidentalType.DOUBLE_SHARP: (0, 0, 255),  # Red
+        AccidentalType.DOUBLE_FLAT: (255, 191, 0), # Light blue
+        AccidentalType.KEY_SHARP: (0, 0, 255),     # Red
+        AccidentalType.KEY_FLAT: (255, 191, 0),    # Light blue
+    }
+    return colors.get(acc_type, None)
 
 
 def draw_accidental_note_connections(
@@ -228,11 +224,12 @@ def draw_accidental_note_connections(
     staffs: list[Staff],
 ) -> NDArray:
     """
-    Draw visualization showing which accidentals affect which notes.
+    Draw visualization showing which notes are affected by accidentals.
 
-    - Draws lines connecting accidentals to their affected notes
-    - Circles affected notes with color based on accidental type
-    - Labels show the pitch relationship
+    - Draws ellipses around affected notes (5px buffer around notehead)
+    - Red for sharps, light blue for flats
+    - Naturals are NOT highlighted
+    - No connecting lines - just the ellipses around affected notes
 
     Args:
         image: Original image to draw on
@@ -240,95 +237,248 @@ def draw_accidental_note_connections(
         staffs: List of Staff objects (for drawing staff lines)
 
     Returns:
-        Image with connections drawn
+        Image with affected notes highlighted
     """
     img = image.copy()
     if len(img.shape) == 2:
         img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
 
-    # Draw staff lines in light gray
-    for staff in staffs:
-        staff.draw_onto_image(img, (180, 180, 180))
+    # Track which notes we've already drawn to avoid duplicates
+    drawn_notes: set[int] = set()
 
-    # Color map for different accidental types
-    colors = {
-        AccidentalType.SHARP: (0, 0, 255),       # Red
-        AccidentalType.FLAT: (255, 165, 0),      # Orange
-        AccidentalType.NATURAL: (0, 255, 0),     # Green
-        AccidentalType.DOUBLE_SHARP: (0, 0, 200),
-        AccidentalType.DOUBLE_FLAT: (200, 100, 0),
-        AccidentalType.KEY_SHARP: (100, 100, 255),  # Light red
-        AccidentalType.KEY_FLAT: (255, 200, 100),   # Light orange
-        AccidentalType.KEY_NATURAL: (100, 255, 100), # Light green
-    }
-
-    # Group matches by accidental for cleaner visualization
-    acc_to_notes: dict[int, list[AccidentalNoteMatch]] = {}
+    # Draw ellipses around each affected note
     for match in matches:
-        acc_id = id(match.accidental)
-        if acc_id not in acc_to_notes:
-            acc_to_notes[acc_id] = []
-        acc_to_notes[acc_id].append(match)
+        note = match.note
+        note_id = id(note)
 
-    # Draw each accidental and its connected notes
-    for acc_id, acc_matches in acc_to_notes.items():
-        if not acc_matches:
+        # Skip if we've already drawn this note
+        if note_id in drawn_notes:
             continue
 
-        acc = acc_matches[0].accidental
-        color = colors.get(acc.accidental_type, (128, 128, 128))
+        # Get color based on accidental type (None for naturals)
+        color = get_accidental_color(match.accidental.accidental_type)
 
-        # Draw accidental box
-        acc.box.draw_onto_image(img, color)
+        # Skip naturals - they don't get highlighted
+        if color is None:
+            continue
 
-        # Draw label for accidental
-        acc_label = f"{acc.accidental_type.get_symbol()}{acc_matches[0].note_letter}"
-        cv2.putText(
+        drawn_notes.add(note_id)
+
+        # Get note center
+        center = (int(note.center[0]), int(note.center[1]))
+
+        # Get note size and add 5px buffer for the ellipse
+        if hasattr(note.box, 'size'):
+            # Size is (width, height) of the notehead
+            width = note.box.size[0]
+            height = note.box.size[1]
+            # Axes are half-widths with 5px buffer
+            axes = (int(width / 2 + 5), int(height / 2 + 5))
+        else:
+            # Default size if not available
+            axes = (12, 8)
+
+        # Get rotation angle if available
+        angle = 0
+        if hasattr(note.box, 'angle'):
+            angle = note.box.angle
+
+        # Draw the ellipse around the notehead
+        cv2.ellipse(img, center, axes, angle, 0, 360, color, 2)
+
+    return img
+
+
+def draw_accidental_note_connections_with_lines(
+    image: NDArray,
+    matches: list[AccidentalNoteMatch],
+    staffs: list[Staff],
+) -> NDArray:
+    """
+    Draw visualization showing which notes are affected by accidentals WITH connecting lines.
+
+    - Draws lines from accidentals to their affected notes
+    - Draws ellipses around affected notes (5px buffer around notehead)
+    - Red for sharps, light blue for flats
+    - Naturals are NOT highlighted
+
+    Args:
+        image: Original image to draw on
+        matches: List of AccidentalNoteMatch objects
+        staffs: List of Staff objects (for drawing staff lines)
+
+    Returns:
+        Image with affected notes highlighted and lines connecting them
+    """
+    img = image.copy()
+    if len(img.shape) == 2:
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+
+    # Track which notes we've already drawn ellipses for
+    drawn_notes: set[int] = set()
+
+    # Draw lines first (so ellipses are on top)
+    for match in matches:
+        # Get color based on accidental type (None for naturals)
+        color = get_accidental_color(match.accidental.accidental_type)
+
+        # Skip naturals
+        if color is None:
+            continue
+
+        acc = match.accidental
+        note = match.note
+
+        # Draw line from accidental to note
+        cv2.line(
             img,
-            acc_label,
-            (int(acc.center[0]) - 10, int(acc.center[1]) - 15),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
+            (int(acc.center[0]), int(acc.center[1])),
+            (int(note.center[0]), int(note.center[1])),
             color,
             1,
             cv2.LINE_AA
         )
 
-        # Draw connections and circles for each affected note
-        for match in acc_matches:
-            note = match.note
+    # Draw ellipses around each affected note
+    for match in matches:
+        note = match.note
+        note_id = id(note)
 
-            # Draw line from accidental to note
-            cv2.line(
-                img,
-                (int(acc.center[0]), int(acc.center[1])),
-                (int(note.center[0]), int(note.center[1])),
-                color,
-                1,
-                cv2.LINE_AA
-            )
+        # Skip if we've already drawn this note
+        if note_id in drawn_notes:
+            continue
 
-            # Circle the affected note
-            center = (int(note.center[0]), int(note.center[1]))
-            # Get note size for ellipse
-            if hasattr(note.box, 'size'):
-                axes = (int(note.box.size[0] / 2 + 8), int(note.box.size[1] / 2 + 8))
-            else:
-                axes = (15, 10)
+        # Get color based on accidental type (None for naturals)
+        color = get_accidental_color(match.accidental.accidental_type)
 
-            cv2.ellipse(img, center, axes, 0, 0, 360, color, 2)
+        # Skip naturals
+        if color is None:
+            continue
 
-            # Small label showing the note pitch
-            cv2.putText(
-                img,
-                match.note_pitch,
-                (center[0] + axes[0] + 2, center[1] + 4),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.35,
-                color,
-                1,
-                cv2.LINE_AA
-            )
+        drawn_notes.add(note_id)
+
+        # Get note center
+        center = (int(note.center[0]), int(note.center[1]))
+
+        # Get note size and add 5px buffer for the ellipse
+        if hasattr(note.box, 'size'):
+            width = note.box.size[0]
+            height = note.box.size[1]
+            axes = (int(width / 2 + 5), int(height / 2 + 5))
+        else:
+            axes = (12, 8)
+
+        # Get rotation angle if available
+        angle = 0
+        if hasattr(note.box, 'angle'):
+            angle = note.box.angle
+
+        # Draw the ellipse around the notehead
+        cv2.ellipse(img, center, axes, angle, 0, 360, color, 2)
+
+    # Also draw boxes around the accidentals
+    drawn_accidentals: set[int] = set()
+    for match in matches:
+        acc = match.accidental
+        acc_id = id(acc)
+
+        if acc_id in drawn_accidentals:
+            continue
+
+        color = get_accidental_color(acc.accidental_type)
+        if color is None:
+            continue
+
+        drawn_accidentals.add(acc_id)
+        acc.box.draw_onto_image(img, color)
+
+    return img
+
+
+def draw_letter_labels_visualization(
+    image: NDArray,
+    accidentals: list,
+    notes: list,
+    staffs: list[Staff],
+    clef: str = "treble"
+) -> NDArray:
+    """
+    Draw visualization showing just the letter values for accidentals and notes.
+
+    - Accidentals show letter + accidental symbol (e.g., "F#", "Bb", "GN")
+    - Notes show just the letter (e.g., "F", "G", "D")
+
+    Args:
+        image: Original image to draw on
+        accidentals: List of Accidental objects
+        notes: List of Note objects
+        staffs: List of Staff objects
+        clef: "treble" or "bass" for pitch calculation
+
+    Returns:
+        Image with letter labels
+    """
+    img = image.copy()
+    if len(img.shape) == 2:
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+
+    # Colors
+    acc_color = (0, 0, 255)      # Red for accidentals
+    note_color = (255, 0, 0)     # Blue for notes
+
+    # Draw accidentals with letter + symbol
+    for acc in accidentals:
+        pitch = acc.get_pitch_name(clef)
+        letter = extract_note_letter(pitch)
+
+        # Get the accidental symbol
+        symbol = acc.accidental_type.get_symbol()
+        label = f"{letter}{symbol}"
+
+        # Position label above the accidental
+        x = int(acc.center[0]) - 10
+        y = int(acc.center[1]) - 10
+
+        # Draw background rectangle for readability
+        (text_w, text_h), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        cv2.rectangle(img, (x - 2, y - text_h - 2), (x + text_w + 2, y + 2), (255, 255, 255), -1)
+        cv2.rectangle(img, (x - 2, y - text_h - 2), (x + text_w + 2, y + 2), acc_color, 1)
+
+        cv2.putText(
+            img,
+            label,
+            (x, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            acc_color,
+            1,
+            cv2.LINE_AA
+        )
+
+    # Draw notes with just the letter
+    for note in notes:
+        pitch = note.get_pitch_name(clef)
+        letter = extract_note_letter(pitch)
+
+        # Position label below the note
+        x = int(note.center[0]) - 5
+        y = int(note.center[1]) + 20
+
+        # Draw background rectangle for readability
+        (text_w, text_h), baseline = cv2.getTextSize(letter, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+        cv2.rectangle(img, (x - 2, y - text_h - 2), (x + text_w + 2, y + 2), (255, 255, 255), -1)
+        cv2.rectangle(img, (x - 2, y - text_h - 2), (x + text_w + 2, y + 2), note_color, 1)
+
+        cv2.putText(
+            img,
+            letter,
+            (x, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            note_color,
+            1,
+            cv2.LINE_AA
+        )
 
     return img
 
