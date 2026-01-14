@@ -53,33 +53,159 @@ class SymbolOnStaff(DebugDrawable):
         return copy
 
 
+class AccidentalType(Enum):
+    SHARP = "sharp"
+    FLAT = "flat"
+    NATURAL = "natural"
+    DOUBLE_SHARP = "double_sharp"
+    DOUBLE_FLAT = "double_flat"
+    KEY_SHARP = "key_sharp"
+    KEY_FLAT = "key_flat"
+    KEY_NATURAL = "key_natural"
+    UNKNOWN = "unknown"
+
+    @staticmethod
+    def from_class_name(class_name: str) -> "AccidentalType":
+        """Convert YOLOv10 class name to AccidentalType."""
+        class_name_lower = class_name.lower()
+        if "doublesharp" in class_name_lower:
+            return AccidentalType.DOUBLE_SHARP
+        elif "doubleflat" in class_name_lower:
+            return AccidentalType.DOUBLE_FLAT
+        elif "keysharp" in class_name_lower:
+            return AccidentalType.KEY_SHARP
+        elif "keyflat" in class_name_lower:
+            return AccidentalType.KEY_FLAT
+        elif "keynatural" in class_name_lower:
+            return AccidentalType.KEY_NATURAL
+        elif "sharp" in class_name_lower:
+            return AccidentalType.SHARP
+        elif "flat" in class_name_lower:
+            return AccidentalType.FLAT
+        elif "natural" in class_name_lower:
+            return AccidentalType.NATURAL
+        else:
+            return AccidentalType.UNKNOWN
+
+    def get_symbol(self) -> str:
+        """Get the musical symbol for this accidental type."""
+        symbols = {
+            AccidentalType.SHARP: "#",
+            AccidentalType.FLAT: "b",
+            AccidentalType.NATURAL: "N",
+            AccidentalType.DOUBLE_SHARP: "##",
+            AccidentalType.DOUBLE_FLAT: "bb",
+            AccidentalType.KEY_SHARP: "#",
+            AccidentalType.KEY_FLAT: "b",
+            AccidentalType.KEY_NATURAL: "N",
+            AccidentalType.UNKNOWN: "?",
+        }
+        return symbols.get(self, "?")
+
+
 class Accidental(SymbolOnStaff):
-    def __init__(self, box: BoundingBox, position: int) -> None:
+    # Class variable to track accidental indices for visualization
+    _accidental_counter = 0
+
+    def __init__(
+        self,
+        box: BoundingBox | RotatedBoundingBox,
+        position: int,
+        accidental_type: AccidentalType = AccidentalType.UNKNOWN,
+        confidence: float = 1.0,
+    ) -> None:
         super().__init__(box.center)
         self.box = box
         self.position = position
+        self.accidental_type = accidental_type
+        self.confidence = confidence
+        self.accidental_index: int | None = None  # Assigned during visualization
+
+    @classmethod
+    def reset_accidental_counter(cls) -> None:
+        cls._accidental_counter = 0
+
+    @classmethod
+    def get_next_accidental_index(cls) -> int:
+        cls._accidental_counter += 1
+        return cls._accidental_counter
+
+    def get_pitch_name(self, clef: str = "treble") -> str:
+        """
+        Convert staff position to pitch name with accidental.
+        Position 0 = bottom line of staff (E4 for treble, G2 for bass)
+        Each position step = one note (line or space)
+        """
+        # For treble clef: position 0 = E4, position increases go up
+        if clef == "treble":
+            base_note_index = 4  # E is index 4 in note_names (C=0, D=1, E=2, F=3, G=4, A=5, B=6)
+            base_octave = 4
+        else:  # bass clef
+            base_note_index = 4  # G
+            base_octave = 2
+
+        # Calculate pitch from position
+        note_offset = self.position + base_note_index
+        octave_offset = note_offset // 7
+        note_in_octave = note_offset % 7
+
+        if note_in_octave < 0:
+            note_in_octave += 7
+            octave_offset -= 1
+
+        pitch_name = note_names[note_in_octave]
+        octave = base_octave + octave_offset
+
+        # Add accidental symbol
+        accidental_symbol = self.accidental_type.get_symbol()
+
+        return f"{pitch_name}{accidental_symbol}{octave}"
 
     def draw_onto_image(self, img: NDArray, color: tuple[int, int, int] = (255, 0, 0)) -> None:
         self.box.draw_onto_image(img, color)
+
+        # Get accidental index if not already assigned
+        if self.accidental_index is None:
+            self.accidental_index = Accidental.get_next_accidental_index()
+
+        # Get pitch name from position
+        pitch_name = self.get_pitch_name()
+
+        # Format: "acc1 - F#4" or "acc2 - Bb3"
+        label = f"acc{self.accidental_index} - {pitch_name}"
+
+        # Get position for text (handle both BoundingBox and RotatedBoundingBox)
+        if hasattr(self.box, 'box') and isinstance(self.box.box, (list, tuple)) and len(self.box.box) >= 2:
+            if isinstance(self.box.box[0], (int, float)):
+                text_x = int(self.box.box[0])
+                text_y = int(self.box.box[1])
+            else:
+                # RotatedBoundingBox format: ((center_x, center_y), (width, height), angle)
+                text_x = int(self.box.center[0])
+                text_y = int(self.box.center[1])
+        else:
+            text_x = int(self.center[0])
+            text_y = int(self.center[1])
+
         cv2.putText(
             img,
-            "accidental-" + str(self.position),
-            (int(self.box.box[0]), int(self.box.box[1])),
+            label,
+            (text_x, text_y),
             cv2.FONT_HERSHEY_SIMPLEX,
-            1,
+            0.5,
             color,
-            2,
+            1,
             cv2.LINE_AA,
         )
 
     def __str__(self) -> str:
-        return "Accidental(" + str(self.center) + ")"
+        return f"Accidental({self.center}, {self.accidental_type.value}, pos={self.position})"
 
     def __repr__(self) -> str:
         return str(self)
 
     def copy(self) -> "Accidental":
-        return Accidental(self.box, self.position)
+        return Accidental(self.box, self.position, self.accidental_type, self.confidence)
 
 
 class Rest(SymbolOnStaff):

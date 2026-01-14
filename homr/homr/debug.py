@@ -128,6 +128,110 @@ class Debug:
         filename = self.base_filename + "_notes.png"
         cv2.imwrite(filename, img)
 
+    def write_accidentals_visualization(
+        self, multi_staffs: Sequence[DebugDrawable], accidentals: Sequence[DebugDrawable]
+    ) -> None:
+        """Write visualization showing detected accidentals with pitch names."""
+        # Late import to avoid circular dependency
+        from homr.model import Accidental, AccidentalType
+
+        img = self.original_image.copy()
+
+        # Reset accidental counter for consistent numbering
+        Accidental.reset_accidental_counter()
+
+        # Draw staff lines first (in gray for reference)
+        for staff in multi_staffs:
+            staff.draw_onto_image(img, (128, 128, 128))
+
+        # Sort accidentals by x position (left to right) for sequential numbering
+        sorted_accidentals = sorted(
+            accidentals, key=lambda a: a.center[0] if hasattr(a, 'center') else 0
+        )
+
+        # Color map for different accidental types
+        accidental_colors = {
+            AccidentalType.SHARP: (0, 0, 255),       # Red
+            AccidentalType.FLAT: (255, 0, 0),         # Blue
+            AccidentalType.NATURAL: (0, 255, 0),      # Green
+            AccidentalType.DOUBLE_SHARP: (0, 128, 255),  # Orange
+            AccidentalType.DOUBLE_FLAT: (255, 0, 128),   # Purple
+            AccidentalType.KEY_SHARP: (0, 0, 200),    # Dark Red
+            AccidentalType.KEY_FLAT: (200, 0, 0),     # Dark Blue
+            AccidentalType.KEY_NATURAL: (0, 200, 0),  # Dark Green
+            AccidentalType.UNKNOWN: (128, 128, 128),  # Gray
+        }
+
+        # Draw accidentals with type-based colors
+        for acc in sorted_accidentals:
+            if hasattr(acc, 'accidental_type'):
+                color = accidental_colors.get(acc.accidental_type, (128, 128, 128))
+            else:
+                color = (128, 128, 128)
+            acc.draw_onto_image(img, color)
+
+        filename = self.base_filename + "_accidentals.png"
+        cv2.imwrite(filename, img)
+        print(f"Saved accidentals visualization: {filename}")
+
+    def write_full_visualization(
+        self,
+        multi_staffs: Sequence[DebugDrawable],
+        notes: Sequence[DebugDrawable],
+        accidentals: Sequence[DebugDrawable],
+    ) -> None:
+        """Write visualization showing both notes AND accidentals with pitch names."""
+        # Late import to avoid circular dependency
+        from homr.model import Note, Accidental, AccidentalType
+
+        img = self.original_image.copy()
+
+        # Reset counters for consistent numbering
+        Note.reset_note_counter()
+        Accidental.reset_accidental_counter()
+
+        # Draw staff lines first (in gray for reference)
+        for staff in multi_staffs:
+            staff.draw_onto_image(img, (128, 128, 128))
+
+        # Sort notes by x position
+        sorted_notes = sorted(notes, key=lambda n: n.center[0] if hasattr(n, 'center') else 0)
+
+        # Sort accidentals by x position
+        sorted_accidentals = sorted(
+            accidentals, key=lambda a: a.center[0] if hasattr(a, 'center') else 0
+        )
+
+        # Draw notes with alternating colors
+        for i, note in enumerate(sorted_notes):
+            color = self.colors[i % len(self.colors)]
+            note.draw_onto_image(img, color)
+
+        # Color map for accidentals
+        accidental_colors = {
+            AccidentalType.SHARP: (0, 0, 255),       # Red
+            AccidentalType.FLAT: (255, 0, 0),         # Blue
+            AccidentalType.NATURAL: (0, 255, 0),      # Green
+            AccidentalType.DOUBLE_SHARP: (0, 128, 255),  # Orange
+            AccidentalType.DOUBLE_FLAT: (255, 0, 128),   # Purple
+            AccidentalType.KEY_SHARP: (0, 0, 200),    # Dark Red
+            AccidentalType.KEY_FLAT: (200, 0, 0),     # Dark Blue
+            AccidentalType.KEY_NATURAL: (0, 200, 0),  # Dark Green
+            AccidentalType.UNKNOWN: (128, 128, 128),  # Gray
+        }
+
+        # Draw accidentals
+        for acc in sorted_accidentals:
+            if hasattr(acc, 'accidental_type'):
+                color = accidental_colors.get(acc.accidental_type, (128, 128, 128))
+            else:
+                color = (128, 128, 128)
+            acc.draw_onto_image(img, color)
+
+        filename = self.base_filename + "_full.png"
+        cv2.imwrite(filename, img)
+        print(f"Saved full visualization (notes + accidentals): {filename}")
+
     def write_model_input_image(self, suffix: str, staff_image: NDArray) -> str:
         """
         These files aren't really debug files, but it's convenient to handle them here

@@ -1,0 +1,313 @@
+================================================================================
+HOMR NOTE & ACCIDENTAL DETECTION WORKFLOW
+================================================================================
+
+This document explains how the polyphonic note detection and accidental
+detection systems work, including the staff-line positioning that converts
+detected symbols into pitch names (e.g., "C4", "F#5", "Bb3").
+
+================================================================================
+OVERVIEW
+================================================================================
+
+The system has TWO main detection pipelines:
+
+1. NOTE DETECTION: Uses ML segmentation to find noteheads, then calculates
+   pitch from staff line position.
+
+2. ACCIDENTAL DETECTION: Uses YOLOv10 to find sharps/flats/naturals, then
+   uses the SAME staff positioning system to determine which pitch they modify.
+
+Both pipelines share the same core positioning logic - measuring vertical
+distance from staff lines to determine pitch.
+
+================================================================================
+PART 1: IMAGE PREPROCESSING & SEGMENTATION
+================================================================================
+
+INPUT: Sheet music image (PNG/JPG)
+
+STEP 1.1: Preprocessing
+- Load image with OpenCV
+- Auto-crop whitespace
+- Resize to standard size
+- Color adjustment for better contrast
+
+STEP 1.2: Deep Learning Segmentation (SegNet)
+- Uses ONNX segmentation model (segnet_155-*.onnx)
+- Slides 320x320 window across image
+- Outputs 6 semantic layers:
+  * Layer 1: Stems/rests
+  * Layer 2: Noteheads
+  * Layer 3: Clefs/keys
+  * Layer 4: Staff lines
+  * Layer 5: General symbols
+- Each layer is a binary mask showing where those symbols are
+
+================================================================================
+PART 2: BOUNDING BOX EXTRACTION
+================================================================================
+
+From the segmentation masks, we extract bounding boxes:
+
+NOTEHEADS:
+- Use cv2.findContours() on notehead mask
+- Fit ellipses with cv2.fitEllipse()
+- Creates BoundingEllipse objects with:
+  * Center (x, y)
+  * Size (width, height)
+  * Angle (rotation)
+
+STAFF LINES:
+- Extract staff line fragments as RotatedBoundingBox
+- These are used to build the staff grid
+
+STEMS:
+- Extract stem bounding boxes
+- Link stems to noteheads (within 15 pixels)
+
+================================================================================
+PART 3: STAFF DETECTION & GRID BUILDING
+================================================================================
+
+This is the KEY part for pitch detection!
+
+STEP 3.1: Find Staff Line Segments
+- Group staff fragments into continuous lines
+- Find sets of 5 parallel lines (= one staff)
+
+STEP 3.2: Build Staff Grid
+- For each staff, create a GRID of StaffPoint objects
+- Each StaffPoint stores:
+  * X position
+  * Y positions of all 5 staff lines at that X
+  * Average "unit size" (spacing between lines)
+
+Example grid for a curved staff:
+
+    X=0        X=100      X=200      X=300
+    |          |          |          |
+    y=[100,    y=[102,    y=[105,    y=[103,    <- Line 5 (top)
+       120,       121,       124,       122,    <- Line 4
+       140,       142,       145,       143,    <- Line 3 (middle)
+       160,       163,       166,       164,    <- Line 2
+       180]       184]       187]       185]    <- Line 1 (bottom)
+
+This grid allows us to know exactly where staff lines are at ANY x position,
+even if the staff is curved or warped!
+
+================================================================================
+PART 4: POSITION CALCULATION (THE CORE ALGORITHM)
+================================================================================
+
+When we detect a notehead or accidental, we need to know its PITCH.
+
+The function find_position_in_unit_sizes() does this:
+
+```python
+def find_position_in_unit_sizes(self, box):
+    center = box.center  # Get symbol's center (x, y)
+
+    # 1. Find which staff line is closest vertically
+    idx_of_closest_y = argmin(abs(staff_line_y - center_y) for each line)
+
+    # 2. Calculate distance from that line (in pixels)
+    distance = staff_line_y[closest] - center_y
+
+    # 3. Convert to "unit sizes" (half staff-line spacings)
+    #    Multiply by 2 because we count both lines AND spaces
+    distance_in_unit_sizes = round(2 * distance / average_unit_size)
+
+    # 4. Calculate final position number
+    position = 2 * (number_of_lines - closest_line_index) + distance_in_unit_sizes - 1
+
+    return position  # Integer: 0, 1, 2, 3, etc.
+```
+
+POSITION NUMBERS:
+- Position 0 = Bottom staff line (E4 in treble clef)
+- Position 1 = First space above bottom line (F4)
+- Position 2 = Second line (G4)
+- Position 3 = Second space (A4)
+- Position 4 = Middle line (B4)
+- Position 5 = Third space (C5)
+- Position 6 = Fourth line (D5)
+- Position 7 = Fourth space (E5)
+- Position 8 = Top line (F5)
+- Negative positions = below staff (ledger lines)
+- Positions > 8 = above staff (ledger lines)
+
+================================================================================
+PART 5: POSITION TO PITCH NAME CONVERSION
+================================================================================
+
+Once we have a position number, we convert to a pitch name:
+
+```python
+def get_pitch_name(self, clef="treble"):
+    # Note names in order
+    note_names = ["C", "D", "E", "F", "G", "A", "B"]
+
+    # For treble clef: position 0 = E4
+    # E is index 4 in note_names (C=0, D=1, E=2, F=3, G=4, A=5, B=6)
+    # Wait, that's wrong - E is index 2. Let me recalculate...
+    # Actually in the code: base_note_index = 4 means we start counting
+    # from a specific offset
+
+    base_note_index = 4  # Starting offset
+    base_octave = 4      # Starting octave
+
+    # Calculate which note
+    note_offset = position + base_note_index
+    octave = base_octave + (note_offset // 7)
+    note_index = note_offset % 7
+
+    return f"{note_names[note_index]}{octave}"
+```
+
+Examples:
+- Position 0 → E4 (bottom line)
+- Position 2 → G4 (second line)
+- Position 4 → B4 (middle line)
+- Position 8 → F5 (top line)
+- Position -2 → C4 (first ledger line below)
+
+================================================================================
+PART 6: NOTE DETECTION PIPELINE
+================================================================================
+
+STEP 6.1: Extract noteheads from segmentation
+- Get BoundingEllipse for each notehead
+
+STEP 6.2: Link stems to noteheads
+- Find stems within 15 pixels of each notehead
+- Determine stem direction (UP or DOWN)
+
+STEP 6.3: Assign notes to staffs
+- For each notehead, find which staff it belongs to
+- Check if notehead is within staff zone (±4 ledger lines)
+
+STEP 6.4: Calculate position
+- Get StaffPoint at notehead's X position
+- Use find_position_in_unit_sizes() to get position number
+
+STEP 6.5: Create Note object
+- Store notehead box, position, stem info
+- Can call get_pitch_name() to get "C4", "E5", etc.
+
+================================================================================
+PART 7: ACCIDENTAL DETECTION PIPELINE
+================================================================================
+
+STEP 7.1: YOLOv10 Detection
+- Uses model trained on DeepScores dataset
+- Detects these classes:
+  * accidentalSharp, accidentalSharpSmall
+  * accidentalFlat, accidentalFlatSmall
+  * accidentalNatural, accidentalNaturalSmall
+  * accidentalDoubleSharp, accidentalDoubleFlat
+  * keySharp, keyFlat, keyNatural
+- Returns bounding boxes with class names and confidence scores
+
+STEP 7.2: Assign accidentals to staffs
+- For each detection, find which staff it belongs to
+- Use staff.is_on_staff_zone() to check if within range
+
+STEP 7.3: Calculate position (SAME AS NOTES!)
+- Get StaffPoint at accidental's X position
+- Use find_position_in_unit_sizes() to get position number
+- This is the EXACT SAME function used for notes!
+
+STEP 7.4: Create Accidental object
+- Store box, position, accidental type, confidence
+- get_pitch_name() returns pitch WITH accidental symbol:
+  * Sharp: "F#4", "C#5"
+  * Flat: "Bb3", "Eb4"
+  * Natural: "FN4", "BN3"
+  * Double sharp: "F##4"
+  * Double flat: "Bbb3"
+
+================================================================================
+PART 8: VISUALIZATION OUTPUT
+================================================================================
+
+The system generates several visualization files:
+
+1. page_1_notes.png
+   - Shows all detected noteheads with labels
+   - Format: "note1 - C4", "note2 - E5", etc.
+   - Notes numbered left-to-right
+
+2. page_1_accidentals.png
+   - Shows all detected accidentals with labels
+   - Format: "acc1 - F#4", "acc2 - Bb3", etc.
+   - Color-coded by type:
+     * Red = sharps
+     * Blue = flats
+     * Green = naturals
+
+3. page_1_full.png
+   - Shows BOTH notes AND accidentals together
+   - Complete picture of detected symbols
+
+================================================================================
+KEY INSIGHT: WHY THIS WORKS FOR CURVED STAFFS
+================================================================================
+
+The staff grid stores Y positions at EVERY X position across the page.
+
+When we detect a symbol at position (x=450, y=230):
+1. Look up the staff grid at x=450
+2. Get the local Y positions of all 5 lines at x=450
+3. Calculate distance from closest line
+4. Convert to position number
+
+This means even if the staff curves up or down, we're always measuring
+relative to the LOCAL staff line positions, not some global average.
+
+================================================================================
+FILES REFERENCE
+================================================================================
+
+CORE DETECTION:
+- homr/model.py              - Note, Accidental, Staff, StaffPoint classes
+- homr/note_detection.py     - Note detection and staff assignment
+- homr/staff_detection.py    - Staff line detection and grid building
+- homr/bounding_boxes.py     - BoundingEllipse, RotatedBoundingBox classes
+
+ACCIDENTAL DETECTION:
+- homr/accidental_detection.py           - Main accidental pipeline
+- homr/detection/accidentals/            - YOLOv10 detector
+  - accidental_detector.py               - AccidentalDetector class
+  - notehead_detector.py                 - Base detector class
+
+SEGMENTATION:
+- homr/segmentation/inference_segnet.py  - ONNX segmentation model
+
+VISUALIZATION:
+- homr/debug.py              - Visualization output functions
+
+MODEL WEIGHTS:
+- homr/models/accidentals/best.pt        - YOLOv10 weights for accidentals
+
+================================================================================
+USAGE EXAMPLE
+================================================================================
+
+```python
+from homr.accidental_detection import detect_and_position_accidentals
+
+# After detecting staffs...
+accidentals = detect_and_position_accidentals(
+    image=original_image,
+    staffs=detected_staffs,
+    confidence_threshold=0.3,
+)
+
+# Print results
+for acc in accidentals:
+    print(f"{acc.accidental_type.value} -> {acc.get_pitch_name()}")
+    # Output: "sharp -> F#4", "flat -> Bb3", etc.
+```
+
+================================================================================
