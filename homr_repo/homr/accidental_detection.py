@@ -1,12 +1,16 @@
 """
 Accidental detection with staff positioning integration.
 
-This module combines YOLOv10 accidental detection with the staff line
-positioning system to determine the pitch of each detected accidental.
+This module combines TWO YOLOv10 accidental detection models:
+1. Custom accidental detector (homr.detection.accidentals)
+2. DeepScoresV2 detector (scanner_deepscores) - has precedence on overlaps
+
+Both models work together to detect sharps, flats, and naturals.
 """
 
 import cv2
 import numpy as np
+import os
 from typing import List, Tuple, Optional
 
 from homr.model import (
@@ -18,11 +22,19 @@ from homr.model import (
 from homr.bounding_boxes import RotatedBoundingBox, BoundingBox
 from homr.type_definitions import NDArray
 
-# Try to import the YOLOv10 detector
+# Try to import the custom YOLOv10 detector
 ACCIDENTAL_DETECTOR_AVAILABLE = False
 try:
     from homr.detection.accidentals import AccidentalDetector, Detection
     ACCIDENTAL_DETECTOR_AVAILABLE = True
+except ImportError:
+    pass
+
+# Try to import the DeepScoresV2 detector
+DEEPSCORES_DETECTOR_AVAILABLE = False
+try:
+    from homr.scanner_deepscores.detection import detect_everything, filter_predictions
+    DEEPSCORES_DETECTOR_AVAILABLE = True
 except ImportError:
     pass
 
@@ -125,6 +137,198 @@ def detect_accidentals_with_yolo(
         return []
 
 
+def detect_accidentals_with_deepscores(
+    image: NDArray,
+    confidence_threshold: float = 0.5,
+    unit_size: Optional[float] = None,
+    max_width_units: float = 2.0,
+    max_height_units: float = 3.0,
+) -> List[Tuple[RotatedBoundingBox, str, float]]:
+    """
+    Detect accidentals using the DeepScoresV2 model.
+
+    This model was trained on DeepScoresV2 dataset with 135 classes including:
+    - keyFlat, keySharp, keyNatural (key signature accidentals)
+    - accidentalFlat, accidentalSharp, accidentalNatural (in-measure accidentals)
+    - accidentalDoubleSharp, accidentalDoubleFlat
+
+    Args:
+        image: Input image (BGR or grayscale)
+        confidence_threshold: Minimum confidence for detections
+        unit_size: Distance between staff lines in pixels
+        max_width_units: Maximum width as multiple of unit_size
+        max_height_units: Maximum height as multiple of unit_size
+
+    Returns:
+        List of (bounding_box, class_name, confidence) tuples
+    """
+    if not DEEPSCORES_DETECTOR_AVAILABLE:
+        print("Warning: DeepScoresV2 detector not available.")
+        return []
+
+    # Calculate size limits
+    if unit_size is not None and unit_size > 0:
+        min_width = int(unit_size * 0.3)
+        max_width = int(unit_size * max_width_units)
+        min_height = int(unit_size * 0.8)
+        max_height = int(unit_size * max_height_units)
+    else:
+        min_width, max_width = 5, 50
+        min_height, max_height = 15, 70
+
+    # Convert to RGB if needed
+    if len(image.shape) == 2:
+        img_rgb = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+    elif image.shape[2] == 3:
+        img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    else:
+        img_rgb = image
+
+    try:
+        # Run detection
+        result = detect_everything(img_rgb)
+
+        # Filter for accidentals only
+        accidental_categories = {
+            'keyFlat', 'keySharp', 'keyNatural',
+            'accidentalFlat', 'accidentalSharp', 'accidentalNatural',
+            'accidentalDoubleSharp', 'accidentalDoubleFlat'
+        }
+
+        # Map DeepScores class names to our class names
+        class_name_map = {
+            'keyFlat': 'key_flat',
+            'keySharp': 'key_sharp',
+            'keyNatural': 'key_natural',
+            'accidentalFlat': 'flat',
+            'accidentalSharp': 'sharp',
+            'accidentalNatural': 'natural',
+            'accidentalDoubleSharp': 'double_sharp',
+            'accidentalDoubleFlat': 'double_flat',
+        }
+
+        results = []
+        filtered_count = 0
+
+        for pred in result.object_prediction_list:
+            if pred.category.name not in accidental_categories:
+                continue
+
+            # Get bounding box
+            x1, y1, x2, y2 = pred.bbox.to_xyxy()
+            width = x2 - x1
+            height = y2 - y1
+
+            # Filter by size
+            if width < min_width or width > max_width:
+                filtered_count += 1
+                continue
+            if height < min_height or height > max_height:
+                filtered_count += 1
+                continue
+
+            # Create RotatedBoundingBox
+            center = ((x1 + x2) / 2, (y1 + y2) / 2)
+            size = (width, height)
+            contours = np.array([
+                [int(x1), int(y1)],
+                [int(x2), int(y1)],
+                [int(x2), int(y2)],
+                [int(x1), int(y2)]
+            ], dtype=np.int32)
+
+            rotated_rect = (center, size, 0.0)
+            bbox = RotatedBoundingBox(rotated_rect, contours)
+
+            # Map class name
+            class_name = class_name_map.get(pred.category.name, pred.category.name)
+            confidence = pred.score.value
+
+            results.append((bbox, class_name, confidence))
+
+        if filtered_count > 0:
+            print(f"DeepScores: Filtered out {filtered_count} detections by size")
+
+        return results
+
+    except Exception as e:
+        print(f"Error in DeepScores detection: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+
+def calculate_iou(box1: RotatedBoundingBox, box2: RotatedBoundingBox) -> float:
+    """Calculate Intersection over Union between two boxes."""
+    # Get bounding rectangles
+    x1_min, y1_min = box1.center[0] - box1.size[0]/2, box1.center[1] - box1.size[1]/2
+    x1_max, y1_max = box1.center[0] + box1.size[0]/2, box1.center[1] + box1.size[1]/2
+
+    x2_min, y2_min = box2.center[0] - box2.size[0]/2, box2.center[1] - box2.size[1]/2
+    x2_max, y2_max = box2.center[0] + box2.size[0]/2, box2.center[1] + box2.size[1]/2
+
+    # Calculate intersection
+    xi_min = max(x1_min, x2_min)
+    yi_min = max(y1_min, y2_min)
+    xi_max = min(x1_max, x2_max)
+    yi_max = min(y1_max, y2_max)
+
+    if xi_max <= xi_min or yi_max <= yi_min:
+        return 0.0
+
+    intersection = (xi_max - xi_min) * (yi_max - yi_min)
+
+    # Calculate union
+    area1 = box1.size[0] * box1.size[1]
+    area2 = box2.size[0] * box2.size[1]
+    union = area1 + area2 - intersection
+
+    return intersection / union if union > 0 else 0.0
+
+
+def merge_detections(
+    primary_detections: List[Tuple[RotatedBoundingBox, str, float]],
+    secondary_detections: List[Tuple[RotatedBoundingBox, str, float]],
+    iou_threshold: float = 0.3,
+) -> List[Tuple[RotatedBoundingBox, str, float]]:
+    """
+    Merge detections from two models.
+
+    Primary detections (DeepScores) have precedence:
+    - All primary detections are kept
+    - Secondary detections are only added if they don't overlap with primary
+
+    Args:
+        primary_detections: Detections from primary model (DeepScores) - has precedence
+        secondary_detections: Detections from secondary model (custom YOLO)
+        iou_threshold: IoU threshold for considering boxes as overlapping
+
+    Returns:
+        Merged list of detections
+    """
+    merged = list(primary_detections)  # Keep all primary detections
+
+    added_count = 0
+    for sec_bbox, sec_class, sec_conf in secondary_detections:
+        # Check if this detection overlaps with any primary detection
+        overlaps = False
+        for pri_bbox, _, _ in primary_detections:
+            iou = calculate_iou(sec_bbox, pri_bbox)
+            if iou > iou_threshold:
+                overlaps = True
+                break
+
+        if not overlaps:
+            # This is an isolated detection from secondary model - add it
+            merged.append((sec_bbox, sec_class, sec_conf))
+            added_count += 1
+
+    if added_count > 0:
+        print(f"Added {added_count} isolated detections from secondary model")
+
+    return merged
+
+
 def add_accidentals_to_staffs(
     staffs: List[Staff],
     accidental_detections: List[Tuple[RotatedBoundingBox, str, float]],
@@ -202,7 +406,11 @@ def detect_and_position_accidentals(
     confidence_threshold: float = 0.3,
 ) -> List[Accidental]:
     """
-    Full pipeline: detect accidentals with YOLO and assign positions using staff lines.
+    Full pipeline: detect accidentals with TWO YOLO models and assign positions.
+
+    Uses TWO detection models that work together:
+    1. DeepScoresV2 model (primary) - has precedence on overlaps
+    2. Custom accidental model (secondary) - fills in isolated detections
 
     Size filtering is relative to staff line spacing:
     - Width: max 2 line spacings
@@ -211,7 +419,7 @@ def detect_and_position_accidentals(
     Args:
         image: Input image (BGR or grayscale)
         staffs: List of detected Staff objects
-        model_path: Path to YOLOv10 weights (None for default)
+        model_path: Path to custom YOLOv10 weights (None for default)
         confidence_threshold: Minimum confidence for detections
 
     Returns:
@@ -225,23 +433,42 @@ def detect_and_position_accidentals(
             unit_size = float(np.mean(unit_sizes))
             print(f"Staff line spacing (unit_size): {unit_size:.1f}px")
 
-    # Step 1: Detect accidentals with YOLO (size filtering relative to staff lines)
-    detections = detect_accidentals_with_yolo(
+    # Step 1a: Detect with DeepScoresV2 model (PRIMARY - has precedence)
+    print("Running DeepScoresV2 accidental detection...")
+    deepscores_detections = detect_accidentals_with_deepscores(
+        image,
+        confidence_threshold=0.5,  # DeepScores uses higher threshold
+        unit_size=unit_size,
+        max_width_units=2.0,
+        max_height_units=3.0,
+    )
+    print(f"DeepScores detected {len(deepscores_detections)} accidentals")
+
+    # Step 1b: Detect with custom YOLO model (SECONDARY - fills gaps)
+    print("Running custom YOLO accidental detection...")
+    yolo_detections = detect_accidentals_with_yolo(
         image,
         model_path=model_path,
         confidence_threshold=confidence_threshold,
         unit_size=unit_size,
-        max_width_units=2.0,   # Max width = 2 line spacings
-        max_height_units=3.0,  # Max height = 3 line spacings
+        max_width_units=2.0,
+        max_height_units=3.0,
     )
+    print(f"Custom YOLO detected {len(yolo_detections)} accidentals")
 
-    print(f"Detected {len(detections)} accidentals with YOLOv10")
+    # Step 2: Merge detections (DeepScores has precedence, YOLO adds isolated ones)
+    merged_detections = merge_detections(
+        primary_detections=deepscores_detections,
+        secondary_detections=yolo_detections,
+        iou_threshold=0.3,
+    )
+    print(f"Total merged detections: {len(merged_detections)}")
 
-    if len(detections) == 0:
+    if len(merged_detections) == 0:
         return []
 
-    # Step 2: Assign to staffs and calculate positions
-    accidentals = add_accidentals_to_staffs(staffs, detections)
+    # Step 3: Assign to staffs and calculate positions
+    accidentals = add_accidentals_to_staffs(staffs, merged_detections)
 
     print(f"Positioned {len(accidentals)} accidentals on staffs")
 
