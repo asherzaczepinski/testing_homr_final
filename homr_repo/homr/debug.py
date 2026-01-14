@@ -232,6 +232,42 @@ class Debug:
         cv2.imwrite(filename, img)
         print(f"Saved full visualization (notes + accidentals): {filename}")
 
+    def write_accidental_effects_visualization(
+        self,
+        multi_staffs: Sequence[DebugDrawable],
+        notes: Sequence[DebugDrawable],
+        accidentals: Sequence[DebugDrawable],
+        staffs: list,
+    ) -> None:
+        """
+        Write visualization showing which notes are affected by which accidentals.
+        Draws lines connecting accidentals to their affected notes and circles affected notes.
+        """
+        from homr.accidental_note_matching import (
+            match_accidentals_to_notes,
+            draw_accidental_note_connections,
+            create_accidental_effects_summary,
+        )
+        from homr.model import Accidental, Note
+
+        # Convert to proper types
+        acc_list = [a for a in accidentals if isinstance(a, Accidental)]
+        note_list = [n for n in notes if isinstance(n, Note)]
+
+        # Match accidentals to notes
+        matches = match_accidentals_to_notes(staffs, acc_list, note_list)
+
+        # Draw visualization
+        img = draw_accidental_note_connections(self.original_image, matches, staffs)
+
+        filename = self.base_filename + "_accidental_effects.png"
+        cv2.imwrite(filename, img)
+        print(f"Saved accidental effects visualization: {filename}")
+
+        # Print summary
+        summary = create_accidental_effects_summary(matches)
+        print(summary)
+
     def write_model_input_image(self, suffix: str, staff_image: NDArray) -> str:
         """
         These files aren't really debug files, but it's convenient to handle them here

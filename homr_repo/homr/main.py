@@ -250,6 +250,11 @@ def process_image(
                 debug.write_full_visualization(multi_staffs, notes, accidentals)
                 eprint("Full visualization written to", replace_extension(image_path, "_full.png"))
 
+                # Write accidental effects visualization (which notes are affected by which accidentals)
+                if len(notes) > 0 and len(staffs) > 0:
+                    debug.write_accidental_effects_visualization(multi_staffs, notes, accidentals, staffs)
+                    eprint("Accidental effects visualization written to", replace_extension(image_path, "_accidental_effects.png"))
+
         debug.clean_debug_files_from_previous_runs()
 
         eprint("Result was written to", xml_file)
