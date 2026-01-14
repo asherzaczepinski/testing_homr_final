@@ -46,6 +46,14 @@ from homr.type_definitions import NDArray
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 
+@dataclass
+class AccidentalDetection:
+    """Represents a detected accidental with its class name."""
+    bbox: RotatedBoundingBox
+    class_name: str
+    confidence: float
+
+
 class PredictedSymbols:
     def __init__(
         self,
@@ -54,12 +62,36 @@ class PredictedSymbols:
         clefs_keys: list[RotatedBoundingBox],
         stems_rest: list[RotatedBoundingBox],
         bar_lines: list[RotatedBoundingBox],
+        accidentals: list[AccidentalDetection] | None = None,
     ) -> None:
         self.noteheads = noteheads
         self.staff_fragments = staff_fragments
         self.clefs_keys = clefs_keys
         self.stems_rest = stems_rest
         self.bar_lines = bar_lines
+        self.accidentals = accidentals or []
+
+
+def calculate_overlap_percentage(box1, box2):
+    """Calculate what percentage of box1 overlaps with box2."""
+    # Get bounding rectangles
+    x1_min, y1_min = box1.top_left
+    x1_max, y1_max = box1.bottom_right
+    x2_min, y2_min = box2.top_left
+    x2_max, y2_max = box2.bottom_right
+
+    # Calculate intersection
+    x_overlap = max(0, min(x1_max, x2_max) - max(x1_min, x2_min))
+    y_overlap = max(0, min(y1_max, y2_max) - max(y1_min, y2_min))
+    overlap_area = x_overlap * y_overlap
+
+    # Calculate box1's area
+    box1_area = (x1_max - x1_min) * (y1_max - y1_min)
+
+    if box1_area == 0:
+        return 0
+
+    return overlap_area / box1_area
 
 
 class InvalidProgramArgumentException(Exception):
@@ -129,7 +161,7 @@ def load_and_preprocess_predictions(
     return predictions, debug
 
 
-def predict_symbols(debug: Debug, predictions: InputPredictions) -> PredictedSymbols:
+def predict_symbols(debug: Debug, predictions: InputPredictions, unit_size: float = 0) -> PredictedSymbols:
     eprint("Creating bounds for noteheads")
     noteheads = create_bounding_ellipses(predictions.notehead, min_size=(4, 4))
     eprint("Creating bounds for staff_fragments")
@@ -137,10 +169,110 @@ def predict_symbols(debug: Debug, predictions: InputPredictions) -> PredictedSym
         predictions.staff, skip_merging=True, min_size=(5, 1), max_size=(10000, 100)
     )
 
-    eprint("Creating bounds for clefs_keys")
-    clefs_keys = create_rotated_bounding_boxes(
-        predictions.clefs_keys, min_size=(20, 40), max_size=(1000, 1000)
+    # Detect all symbols from clefs_keys prediction
+    eprint("Creating bounds for clefs_keys and accidentals")
+    all_symbols = create_rotated_bounding_boxes(
+        predictions.clefs_keys, min_size=(10, 15), max_size=(1000, 1000), skip_merging=True
     )
+
+    # Separate accidentals from clefs based on size
+    # Size filtering is RELATIVE to staff line spacing (unit_size):
+    # - Accidentals: max 2 line spacings wide, max 3 line spacings tall
+    # - Clefs: typically 4+ line spacings tall
+    accidentals_only = []
+    clefs_only = []
+
+    # Calculate size limits based on unit_size
+    if unit_size > 0:
+        # Relative to staff line spacing
+        min_acc_width = int(unit_size * 0.3)
+        max_acc_width = int(unit_size * 2.0)    # Max 2 line spacings
+        min_acc_height = int(unit_size * 0.8)
+        max_acc_height = int(unit_size * 3.0)   # Max 3 line spacings
+        min_clef_height = int(unit_size * 3.5)  # Clefs are taller than accidentals
+        eprint(f"Geometric filtering (unit_size={unit_size:.1f}px): accidentals w:{min_acc_width}-{max_acc_width}, h:{min_acc_height}-{max_acc_height}")
+    else:
+        # Fallback to fixed pixel values
+        min_acc_width, max_acc_width = 5, 25
+        min_acc_height, max_acc_height = 15, 35
+        min_clef_height = 38
+        eprint("Geometric filtering (fallback): accidentals w:5-25, h:15-35")
+
+    for symbol in all_symbols:
+        height = symbol.size[1]
+        width = symbol.size[0]
+        # Accidentals: relative to staff line spacing
+        if min_acc_height <= height <= max_acc_height and min_acc_width <= width <= max_acc_width:
+            accidentals_only.append(symbol)
+        elif height >= min_clef_height:
+            clefs_only.append(symbol)
+        # Anything else (too small, too big, wrong proportions) is ignored
+
+    eprint(f"Found {len(all_symbols)} symbols: {len(accidentals_only)} potential accidentals, {len(clefs_only)} clefs")
+
+    # Filter out accidentals that overlap >50% with clefs
+    filtered_accidentals = []
+    for accidental in accidentals_only:
+        overlaps_clef = False
+        for clef in clefs_only:
+            overlap_pct = calculate_overlap_percentage(accidental, clef)
+            if overlap_pct > 0.5:
+                overlaps_clef = True
+                break
+
+        if not overlaps_clef:
+            filtered_accidentals.append(accidental)
+
+    removed_overlap = len(accidentals_only) - len(filtered_accidentals)
+    if removed_overlap > 0:
+        eprint(f"Removed {removed_overlap} accidentals overlapping with clefs (>50%)")
+    eprint(f"Final: {len(filtered_accidentals)} accidentals after overlap filtering")
+
+    # Also filter overlapping accidentals among themselves (keep higher confidence or first one)
+    final_accidentals = []
+    for i, acc in enumerate(filtered_accidentals):
+        should_keep = True
+        for j, other_acc in enumerate(filtered_accidentals):
+            if i >= j:  # Only compare with earlier ones (already kept)
+                continue
+            overlap_pct = calculate_overlap_percentage(acc, other_acc)
+            if overlap_pct > 0.5:
+                should_keep = False
+                break
+        if should_keep:
+            final_accidentals.append(acc)
+
+    removed_self_overlap = len(filtered_accidentals) - len(final_accidentals)
+    if removed_self_overlap > 0:
+        eprint(f"Removed {removed_self_overlap} overlapping accidentals (>50% overlap with each other)")
+
+    # Use clefs_only for clefs_keys (for staff detection)
+    # Use final_accidentals for accidentals (stored separately)
+    clefs_keys = clefs_only
+
+    # Create AccidentalDetection objects (with geometric fallback classification)
+    accidental_detections = []
+    for acc_box in final_accidentals:
+        # Classify by aspect ratio (geometric fallback)
+        height = acc_box.size[1]
+        width = acc_box.size[0]
+        if width > 0:
+            aspect_ratio = height / width
+            if aspect_ratio > 2.5:
+                class_name = "accidentalSharp"
+            elif aspect_ratio > 1.8:
+                class_name = "accidentalFlat"
+            else:
+                class_name = "accidentalNatural"
+        else:
+            class_name = "unknown"
+
+        accidental_detections.append(AccidentalDetection(
+            bbox=acc_box,
+            class_name=class_name,
+            confidence=1.0  # Geometric detection has no confidence score
+        ))
+
     eprint("Creating bounds for stems_rest")
     stems_rest = create_rotated_bounding_boxes(predictions.stems_rest)
     eprint("Creating bounds for bar_lines")
@@ -148,7 +280,7 @@ def predict_symbols(debug: Debug, predictions: InputPredictions) -> PredictedSym
     debug.write_threshold_image("bar_line_img", bar_line_img)
     bar_lines = create_rotated_bounding_boxes(bar_line_img, skip_merging=True, min_size=(1, 5))
 
-    return PredictedSymbols(noteheads, staff_fragments, clefs_keys, stems_rest, bar_lines)
+    return PredictedSymbols(noteheads, staff_fragments, clefs_keys, stems_rest, bar_lines, accidental_detections)
 
 
 def get_accidental_model_path() -> str:

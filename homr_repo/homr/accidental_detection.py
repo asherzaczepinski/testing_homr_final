@@ -31,14 +31,24 @@ def detect_accidentals_with_yolo(
     image: NDArray,
     model_path: Optional[str] = None,
     confidence_threshold: float = 0.3,
+    unit_size: Optional[float] = None,
+    max_width_units: float = 2.0,
+    max_height_units: float = 3.0,
 ) -> List[Tuple[RotatedBoundingBox, str, float]]:
     """
     Detect accidentals in an image using YOLOv10.
+
+    Size filtering is relative to staff line spacing (unit_size):
+    - Width: max 2 line spacings (accidentals are narrow)
+    - Height: max 3 line spacings (accidentals span about 3 lines)
 
     Args:
         image: Input image (BGR or grayscale)
         model_path: Path to YOLOv10 weights (None for default)
         confidence_threshold: Minimum confidence for detections
+        unit_size: Distance between staff lines in pixels (if None, uses fallback pixel values)
+        max_width_units: Maximum width as multiple of unit_size (default: 2 lines)
+        max_height_units: Maximum height as multiple of unit_size (default: 3 lines)
 
     Returns:
         List of (bounding_box, class_name, confidence) tuples
@@ -46,6 +56,20 @@ def detect_accidentals_with_yolo(
     if not ACCIDENTAL_DETECTOR_AVAILABLE:
         print("Warning: AccidentalDetector not available. Install sahi and ultralytics.")
         return []
+
+    # Calculate size limits based on unit_size (relative to staff line spacing)
+    if unit_size is not None and unit_size > 0:
+        # Minimum size: about 0.3 line spacings
+        min_width = int(unit_size * 0.3)
+        max_width = int(unit_size * max_width_units)
+        min_height = int(unit_size * 0.8)
+        max_height = int(unit_size * max_height_units)
+        print(f"Accidental size filtering (unit_size={unit_size:.1f}px): width {min_width}-{max_width}px, height {min_height}-{max_height}px")
+    else:
+        # Fallback to reasonable pixel values if no unit_size provided
+        min_width, max_width = 5, 50
+        min_height, max_height = 15, 70
+        print(f"Accidental size filtering (fallback): width {min_width}-{max_width}px, height {min_height}-{max_height}px")
 
     # Convert to RGB if needed
     if len(image.shape) == 2:
@@ -63,10 +87,23 @@ def detect_accidentals_with_yolo(
         detections = detector.detect_in_image(img_rgb)
 
         results = []
+        filtered_count = 0
         for det in detections:
+            # Calculate size
+            width = det.x2 - det.x1
+            height = det.y2 - det.y1
+
+            # Filter by size - skip if too big or too small
+            if width < min_width or width > max_width:
+                filtered_count += 1
+                continue
+            if height < min_height or height > max_height:
+                filtered_count += 1
+                continue
+
             # Create a RotatedBoundingBox from the detection
             center = ((det.x1 + det.x2) / 2, (det.y1 + det.y2) / 2)
-            size = (det.x2 - det.x1, det.y2 - det.y1)
+            size = (width, height)
 
             # Create contours for the bounding box
             x1, y1 = int(det.x1), int(det.y1)
@@ -78,6 +115,9 @@ def detect_accidentals_with_yolo(
             bbox = RotatedBoundingBox(rotated_rect, contours)
 
             results.append((bbox, det.class_name, det.confidence))
+
+        if filtered_count > 0:
+            print(f"Filtered out {filtered_count} detections by size (relative to staff lines)")
 
         return results
     except Exception as e:
@@ -164,6 +204,10 @@ def detect_and_position_accidentals(
     """
     Full pipeline: detect accidentals with YOLO and assign positions using staff lines.
 
+    Size filtering is relative to staff line spacing:
+    - Width: max 2 line spacings
+    - Height: max 3 line spacings
+
     Args:
         image: Input image (BGR or grayscale)
         staffs: List of detected Staff objects
@@ -173,11 +217,22 @@ def detect_and_position_accidentals(
     Returns:
         List of Accidental objects with pitch names
     """
-    # Step 1: Detect accidentals with YOLO
+    # Calculate average unit size from all staffs (distance between staff lines)
+    unit_size = None
+    if staffs:
+        unit_sizes = [staff.average_unit_size for staff in staffs if staff.average_unit_size > 0]
+        if unit_sizes:
+            unit_size = float(np.mean(unit_sizes))
+            print(f"Staff line spacing (unit_size): {unit_size:.1f}px")
+
+    # Step 1: Detect accidentals with YOLO (size filtering relative to staff lines)
     detections = detect_accidentals_with_yolo(
         image,
         model_path=model_path,
         confidence_threshold=confidence_threshold,
+        unit_size=unit_size,
+        max_width_units=2.0,   # Max width = 2 line spacings
+        max_height_units=3.0,  # Max height = 3 line spacings
     )
 
     print(f"Detected {len(detections)} accidentals with YOLOv10")
