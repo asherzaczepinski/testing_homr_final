@@ -136,7 +136,7 @@ def replace_extension(path: str, new_extension: str) -> str:
 
 
 def load_and_preprocess_predictions(
-    image_path: str, enable_debug: bool, enable_cache: bool, use_gpu_inference: bool
+    image_path: str, enable_debug: bool, enable_cache: bool, use_gpu_inference: bool, debug_base_path: str = ""
 ) -> tuple[InputPredictions, Debug]:
     image = cv2.imread(image_path)
     if image is None:
@@ -147,7 +147,9 @@ def load_and_preprocess_predictions(
     image = resize_image(image)
     preprocessed, _background = color_adjust.color_adjust(image, 40)
     predictions = get_predictions(image, preprocessed, image_path, enable_cache, use_gpu_inference)
-    debug = Debug(predictions.original, image_path, enable_debug)
+    # Use debug_base_path for output files if provided, otherwise use image_path
+    debug_path = debug_base_path if debug_base_path else image_path
+    debug = Debug(predictions.original, debug_path, enable_debug)
     debug.write_image("color_adjust", preprocessed)
 
     predictions = filter_predictions(predictions, debug)
@@ -304,9 +306,10 @@ def process_image(
     image_path: str,
     config: ProcessingConfig,
     xml_generator_args: XmlGeneratorArguments,
+    output_folder: str = "",
 ) -> None:
     eprint("Processing " + image_path)
-    xml_file = replace_extension(image_path, ".musicxml")
+    xml_file = get_output_path(image_path, output_folder, ".musicxml")
     debug_cleanup: Debug | None = None
     notes: list[Note] = []
     accidentals: list[Accidental] = []
@@ -318,14 +321,16 @@ def process_image(
             if image is None:
                 raise ValueError("Failed to read " + image_path)
             image = resize_image(image)
-            debug = Debug(image, image_path, config.enable_debug)
+            # For debug, use output folder path if provided
+            debug_base_path = get_output_path(image_path, output_folder, "") if output_folder else image_path
+            debug = Debug(image, debug_base_path, config.enable_debug)
             staff_position_files = replace_extension(image_path, ".txt")
             multi_staffs = load_staff_positions(
                 debug, image, staff_position_files, config.selected_staff
             )
             title = ""
         else:
-            multi_staffs, image, debug, title_future, notes, staffs, original_image = detect_staffs_in_image(image_path, config)
+            multi_staffs, image, debug, title_future, notes, staffs, original_image = detect_staffs_in_image(image_path, config, output_folder)
         debug_cleanup = debug
 
         transformer_config = Config()
@@ -347,9 +352,9 @@ def process_image(
         xml.write(xml_file)
 
         eprint("Finished parsing " + str(len(result_staffs)) + " staves")
-        teaser_file = replace_extension(image_path, "_teaser.png")
+        teaser_file = get_output_path(image_path, output_folder, "_teaser.png")
         if config.write_staff_positions:
-            staff_position_files = replace_extension(image_path, ".txt")
+            staff_position_files = get_output_path(image_path, output_folder, ".txt")
             save_staff_positions(multi_staffs, image.shape, staff_position_files)
         debug.write_teaser(teaser_file, multi_staffs)
 
@@ -372,20 +377,20 @@ def process_image(
         if config.visualize:
             if len(notes) > 0:
                 debug.write_notes_visualization(multi_staffs, notes)
-                eprint("Notes visualization written to", replace_extension(image_path, "_notes.png"))
+                eprint("Notes visualization written to", get_output_path(image_path, output_folder, "_notes.png"))
 
             if len(accidentals) > 0:
                 debug.write_accidentals_visualization(multi_staffs, accidentals)
-                eprint("Accidentals visualization written to", replace_extension(image_path, "_accidentals.png"))
+                eprint("Accidentals visualization written to", get_output_path(image_path, output_folder, "_accidentals.png"))
 
                 # Write combined visualization
                 debug.write_full_visualization(multi_staffs, notes, accidentals)
-                eprint("Full visualization written to", replace_extension(image_path, "_full.png"))
+                eprint("Full visualization written to", get_output_path(image_path, output_folder, "_full.png"))
 
                 # Write accidental effects visualization (which notes are affected by which accidentals)
                 if len(notes) > 0 and len(staffs) > 0:
                     debug.write_accidental_effects_visualization(multi_staffs, notes, accidentals, staffs)
-                    eprint("Accidental effects visualization written to", replace_extension(image_path, "_accidental_effects.png"))
+                    eprint("Accidental effects visualization written to", get_output_path(image_path, output_folder, "_accidental_effects.png"))
 
         debug.clean_debug_files_from_previous_runs()
 
@@ -400,10 +405,12 @@ def process_image(
 
 
 def detect_staffs_in_image(
-    image_path: str, config: ProcessingConfig
+    image_path: str, config: ProcessingConfig, output_folder: str = ""
 ) -> tuple[list[MultiStaff], NDArray, Debug, Future[str], list[Note], list[Staff], NDArray]:
+    # Use output folder for debug files if provided
+    debug_base_path = get_output_path(image_path, output_folder, "") if output_folder else image_path
     predictions, debug = load_and_preprocess_predictions(
-        image_path, config.enable_debug, config.enable_cache, config.use_gpu_inference
+        image_path, config.enable_debug, config.enable_cache, config.use_gpu_inference, debug_base_path
     )
     symbols = predict_symbols(debug, predictions)
 
@@ -519,6 +526,62 @@ def download_weights(use_gpu_inference: bool) -> None:
                     os.remove(downloaded_zip)
 
 
+def setup_output_folder(input_path: str) -> str:
+    """
+    Create/clear an output folder for processed files.
+
+    For folder input: creates 'output' folder next to input folder
+    For single file: returns None (outputs go next to input file)
+
+    Returns:
+        Path to output folder, or empty string for single file mode
+    """
+    if os.path.isdir(input_path):
+        # Create output folder next to the input folder
+        parent_dir = os.path.dirname(os.path.abspath(input_path))
+        output_folder = os.path.join(parent_dir, "output")
+
+        # Clear the output folder if it exists
+        if os.path.exists(output_folder):
+            import shutil
+            shutil.rmtree(output_folder)
+            eprint(f"Cleared existing output folder: {output_folder}")
+
+        # Create fresh output folder
+        os.makedirs(output_folder, exist_ok=True)
+        eprint(f"Output folder created: {output_folder}")
+        return output_folder
+    else:
+        # Single file mode - outputs go next to the input file
+        return ""
+
+
+def get_output_path(input_path: str, output_folder: str, new_extension: str) -> str:
+    """
+    Get the output path for a file.
+
+    Args:
+        input_path: Original input file path
+        output_folder: Output folder path (empty string for single file mode)
+        new_extension: New file extension (e.g., ".musicxml", "_notes.png")
+
+    Returns:
+        Full path to output file
+    """
+    base_name = os.path.basename(input_path)
+    name_without_ext = os.path.splitext(base_name)[0]
+
+    if output_folder:
+        # Folder mode - output to output folder
+        # Include a fake extension for Debug class to strip
+        if new_extension == "":
+            return os.path.join(output_folder, name_without_ext + ".png")
+        return os.path.join(output_folder, name_without_ext + new_extension)
+    else:
+        # Single file mode - output next to input file
+        return replace_extension(input_path, new_extension)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="homer", description="An optical music recognition (OMR) system"
@@ -609,18 +672,21 @@ def main() -> None:
         sys.exit(1)
     elif os.path.isfile(args.image):
         try:
-            process_image(args.image, config, xml_generator_args)
+            process_image(args.image, config, xml_generator_args, output_folder="")
         except InvalidProgramArgumentException as e:
             eprint(str(e))
             sys.exit(2)
     elif os.path.isdir(args.image):
+        # Setup output folder (clears existing one)
+        output_folder = setup_output_folder(args.image)
+
         image_files = get_all_image_files_in_folder(args.image)
         eprint("Processing", len(image_files), "files:", image_files)
         error_files = []
         for image_file in image_files:
             eprint("=========================================")
             try:
-                process_image(image_file, config, xml_generator_args)
+                process_image(image_file, config, xml_generator_args, output_folder=output_folder)
                 eprint("Finished", image_file)
             except Exception as e:
                 eprint(f"An error occurred while processing {image_file}: {e}")
