@@ -1,27 +1,12 @@
-# GPT-4 Vision Key Signature Detection
+# GPT-4o Key Signature Detection
 
-This folder contains a testing environment for using **GPT-4 Vision** to automatically detect key signatures from sheet music images.
+Production-ready tool for detecting key signatures from sheet music images using GPT-4o Vision API.
 
 ## What It Does
 
-This tool:
-- Takes sheet music images as input
-- Uses OpenAI's GPT-4 Vision API to analyze the image
-- Identifies the key signature for each staff line
-- Returns results as an array: `["F#", "Bb", "C", ...]`
-- Each index represents one staff, starting from 0 (top staff)
-
-## Folder Structure
-
-```
-testinggpt/
-├── test_images/           # Put your sheet music images HERE
-├── results/              # JSON results saved here
-├── venv/                 # Python virtual environment
-├── .env                  # API key (DO NOT commit to git!)
-├── .gitignore           # Protects your API key
-├── test_gpt_key_detection.py   # Main test script
-└── README.md            # This file
+Analyzes sheet music images and returns key signatures for each staff as an array:
+```python
+["G", "G", "G", "Bb", "F"]  # Each index = one staff
 ```
 
 ## Quick Start
@@ -29,172 +14,147 @@ testinggpt/
 ### 1. Setup (Already Done!)
 - ✓ Virtual environment created
 - ✓ OpenAI library installed
-- ✓ API key configured in `.env`
-- ✓ Input image copied to `test_images/`
+- ✓ API key configured
 
-### 2. Run the Test
+### 2. Run Detection
 
+**Batch Processing (all images in test_images/):**
 ```bash
 cd testinggpt
 source venv/bin/activate
-python test_gpt_key_detection.py
+python detect_key_signatures.py
+```
+
+**Single Image (Python API):**
+```python
+from detect_key_signatures import detect_key_signatures
+
+keys = detect_key_signatures("path/to/sheet_music.png")
+print(keys)  # ['G', 'G', 'G', ...]
 ```
 
 ### 3. Check Results
-- Console output shows key signatures immediately
-- Detailed results saved to `results/key_detection_results_TIMESTAMP.json`
+- Console output shows immediate results
+- JSON results saved to `results/` folder
 
 ## Example Output
 
 ```
-Found 1 image(s) to process
-============================================================
-
+Processing 1 image(s)...
 Analyzing: sheet_music.png
-Using model: gpt-4o
-
-Raw response:
-["Bb", "Bb"]
-
-✓ Key signatures: ["Bb", "Bb"]
-  Staff count: 2
-------------------------------------------------------------
-
-============================================================
-Processing complete!
-Results saved to: results/key_detection_results_20260113_215300.json
-============================================================
+Image size: 1.98MB
+Response: ["G", "G", "G"]
+✓ Detected: ['G', 'G', 'G']
 
 SUMMARY:
-  sheet_music.png: ["Bb", "Bb"]
+  ✓ sheet_music.png: ['G', 'G', 'G']
 ```
 
-## Understanding the Output
+## Key Signature Format
 
-The script returns an array where:
-- **Index 0** = First (top) staff
-- **Index 1** = Second staff
-- **Index 2** = Third staff
-- And so on...
-
-### Key Signature Notation
-- **C** = No sharps or flats (C major / A minor)
-- **G** = 1 sharp (G major / E minor)
-- **D** = 2 sharps (D major / B minor)
-- **F** = 1 flat (F major / D minor)
-- **Bb** = 2 flats (Bb major / G minor)
-- **F#** = 6 sharps (F# major / D# minor)
+- **C** = No sharps/flats
+- **G** = 1 sharp
+- **D** = 2 sharps
+- **A** = 3 sharps
+- **F** = 1 flat
+- **Bb** = 2 flats
+- **Eb** = 3 flats
 - etc.
 
-## Results Format
+## Accuracy
 
-Results are saved as JSON with detailed information:
+Based on testing:
+- ✅ **Key signature detection: Accurate** (correctly identifies G major, F major, etc.)
+- ⚠️ **Staff counting: ~90% accurate** (may be off by 1-2 staves)
+- ✅ **Sharp vs Flat: Reliable** when using the "focus left" approach
 
-```json
-[
-  {
-    "success": true,
-    "key_signatures": ["Bb", "Bb"],
-    "raw_response": "[\"Bb\", \"Bb\"]",
-    "staff_count": 2,
-    "filename": "sheet_music.png",
-    "timestamp": "2026-01-13T21:53:00.123456"
-  }
-]
+See `FINAL_RESULTS.md` for detailed test results.
+
+## Cost
+
+- **~$0.01-0.02 per image**
+- GPT-4o pricing: $2.50/1M input tokens, $10/1M output tokens
+- Processing time: 2-3 seconds per image
+
+## API Limits
+
+- **Image size:** 20MB max
+- **Rate limit:** 500 requests/min (default)
+- **Formats:** PNG, JPG, JPEG, BMP
+
+## Files
+
+```
+testinggpt/
+├── detect_key_signatures.py   # Main script (USE THIS)
+├── test_images/               # Put images here
+├── results/                   # JSON output saved here
+├── FINAL_RESULTS.md          # Detailed test results
+├── .env                       # API key (DO NOT COMMIT)
+└── venv/                     # Python environment
 ```
 
-## API Costs
-
-This uses OpenAI's GPT-4o model with vision:
-- **Cost**: ~$0.01 - $0.05 per image (varies by image size)
-- **Speed**: 2-5 seconds per image
-- Monitor usage at: https://platform.openai.com/usage
-
-## Python API Example
-
-You can also use the functions directly in your code:
+## Python API
 
 ```python
-from test_gpt_key_detection import analyze_key_signatures
+from detect_key_signatures import detect_key_signatures
 
-# Analyze a single image
-result = analyze_key_signatures("path/to/image.png")
+# Detect with verbose output
+keys = detect_key_signatures("image.png", verbose=True)
 
-if result['success']:
-    key_sigs = result['key_signatures']
-    print(f"Key signatures: {key_sigs}")
-    print(f"First staff: {key_sigs[0]}")
-    print(f"Second staff: {key_sigs[1]}")
-else:
-    print(f"Error: {result['error']}")
-```
+# Detect quietly
+keys = detect_key_signatures("image.png", verbose=False)
 
-## Customization
+# Use different model
+keys = detect_key_signatures("image.png", model="gpt-4o-mini")  # Cheaper
 
-### Use a Different Model
-Edit the script to use different GPT models:
-
-```python
-# In test_gpt_key_detection.py, line ~50
-result = analyze_key_signatures(image_path, model="gpt-4o-mini")  # Cheaper, faster
-```
-
-Available models:
-- `gpt-4o` - Best quality (default)
-- `gpt-4o-mini` - Faster and cheaper
-- `gpt-4-turbo` - Previous generation
-
-### Batch Processing
-The script automatically processes all images in `test_images/`:
-
-```bash
-# Add multiple images
-cp /path/to/sheets/*.png test_images/
-
-# Run batch processing
-python test_gpt_key_detection.py
+# Process results
+if keys:
+    for i, key in enumerate(keys):
+        print(f"Staff {i+1}: {key}")
 ```
 
 ## Troubleshooting
 
-### API Key Issues
+**Module not found errors:**
 ```bash
-# Check if .env file exists and has your key
-cat .env
-
-# Make sure the virtual environment is activated
 source venv/bin/activate
 ```
 
-### No Images Found
-Make sure images are in the `test_images/` folder with supported extensions:
-- `.jpg`, `.jpeg`, `.png`, `.bmp`, `.tiff`
+**API key errors:**
+Check that `.env` file exists and contains your OpenAI API key.
 
-### JSON Parse Errors
-If GPT returns text instead of JSON, the script will show the raw response. This can happen with:
-- Very complex or unclear images
-- Images with no visible staff lines
-- Corrupted images
+**No images found:**
+Add images to the `test_images/` folder.
 
-### Rate Limits
-If you hit rate limits:
-- Wait a few seconds between requests
-- Upgrade your OpenAI plan
-- Use `gpt-4o-mini` instead
+**JSON parse errors:**
+The model returned unexpected format - try rerunning or check image quality.
 
-## Security Note
+## Integration
 
-⚠️ **IMPORTANT**: The `.env` file contains your API key and is excluded from git via `.gitignore`. Never commit or share this file!
+To add this to your pipeline:
 
-## Next Steps
+```python
+import sys
+sys.path.append('/path/to/testinggpt')
 
-1. Test with more sheet music images
-2. Evaluate accuracy of key signature detection
-3. Compare results with actual key signatures
-4. If accurate, integrate into your main pipeline
+from detect_key_signatures import detect_key_signatures
 
-## More Information
+# In your pipeline
+image_path = "path/to/sheet_music.png"
+key_signatures = detect_key_signatures(image_path, verbose=False)
 
-- OpenAI Vision API: https://platform.openai.com/docs/guides/vision
-- API Pricing: https://openai.com/api/pricing/
-- Key Signatures Reference: https://en.wikipedia.org/wiki/Key_signature
+if key_signatures:
+    print(f"Detected keys: {key_signatures}")
+    # Use the key signatures in your processing...
+```
+
+## Security
+
+⚠️ **IMPORTANT:** The `.env` file contains your API key and is git-ignored. Never commit or share this file!
+
+## More Info
+
+- OpenAI API: https://platform.openai.com/docs
+- Pricing: https://openai.com/api/pricing/
+- Test Results: See `FINAL_RESULTS.md`
