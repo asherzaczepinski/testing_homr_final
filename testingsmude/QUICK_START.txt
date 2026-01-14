@@ -1,0 +1,64 @@
+SMUDE TESTING ENVIRONMENT - QUICK START
+========================================
+
+SUCCESS! Your smude testing environment is ready to use.
+
+WHAT'S BEEN SET UP:
+-------------------
+✓ Cloned smude repository from GitHub
+✓ Created Python virtual environment
+✓ Installed smude and all dependencies
+✓ Downloaded the 348 MB deep learning model
+✓ Created test folders and test script
+✓ Added example sheet music image
+✓ Verified everything works with a test run
+
+FOLDER STRUCTURE:
+-----------------
+testingsmude/
+├── test_images/         ← PUT YOUR IMAGES HERE
+├── output_images/       ← RESULTS APPEAR HERE
+├── test_smude.py        ← MAIN TEST SCRIPT
+├── smude/              (source repository)
+├── venv/               (Python environment)
+└── README.md           (full documentation)
+
+HOW TO USE:
+-----------
+1. Add your sheet music photos to test_images/
+2. Run: cd testingsmude && source venv/bin/activate && python test_smude.py
+3. Check output_images/ for dewarped results
+
+EXAMPLE ALREADY RUN:
+--------------------
+✓ test_images/example_sheet_music.jpg (original curved photo)
+✓ output_images/dewarped_example_sheet_music.png (straightened result)
+
+COMMAND LINE USAGE:
+-------------------
+For single images:
+  source venv/bin/activate
+  smude test_images/myimage.jpg -o output_images/result.png
+
+Options:
+  --no-binarization    Keep grayscale instead of black/white
+  --use-gpu           Use GPU for faster processing
+
+TIPS FOR BEST RESULTS:
+----------------------
+• Capture the full page with extra margins
+• Use even lighting (no shadows)
+• Keep images sharp and in focus
+• Works best with cylindrical curves (bound books)
+
+NEXT STEPS:
+-----------
+1. Test with your own sheet music images
+2. Evaluate the quality of the dewarping
+3. If you like it, let me know and I'll integrate it into your pipeline
+
+GETTING HELP:
+-------------
+• See README.md for detailed documentation
+• Check smude/README.md for original documentation
+• Example code in smude/example.py
