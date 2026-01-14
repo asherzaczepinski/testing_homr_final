@@ -11,6 +11,7 @@ import numpy as np
 import onnxruntime as ort
 
 from homr import color_adjust, download_utils
+from homr.accidental_detection import detect_and_position_accidentals
 from homr.autocrop import autocrop
 from homr.bar_line_detection import (
     detect_bar_lines,
@@ -27,7 +28,7 @@ from homr.brace_dot_detection import (
     prepare_brace_dot_image,
 )
 from homr.debug import Debug
-from homr.model import InputPredictions, MultiStaff, Note
+from homr.model import Accidental, InputPredictions, MultiStaff, Note, Staff
 from homr.music_xml_generator import XmlGeneratorArguments, generate_xml
 from homr.noise_filtering import filter_predictions
 from homr.note_detection import add_notes_to_staffs, combine_noteheads_with_stems
@@ -150,6 +151,11 @@ def predict_symbols(debug: Debug, predictions: InputPredictions) -> PredictedSym
     return PredictedSymbols(noteheads, staff_fragments, clefs_keys, stems_rest, bar_lines)
 
 
+def get_accidental_model_path() -> str:
+    """Get the path to the accidental detection model."""
+    return os.path.join(os.path.dirname(__file__), "models", "accidentals", "best.pt")
+
+
 @dataclass
 class ProcessingConfig:
     enable_debug: bool
@@ -159,6 +165,7 @@ class ProcessingConfig:
     selected_staff: int
     use_gpu_inference: bool
     visualize: bool
+    detect_accidentals: bool = True
 
 
 def process_image(
@@ -170,6 +177,9 @@ def process_image(
     xml_file = replace_extension(image_path, ".musicxml")
     debug_cleanup: Debug | None = None
     notes: list[Note] = []
+    accidentals: list[Accidental] = []
+    staffs: list[Staff] = []
+    original_image: NDArray | None = None
     try:
         if config.read_staff_positions:
             image = cv2.imread(image_path)
@@ -183,7 +193,7 @@ def process_image(
             )
             title = ""
         else:
-            multi_staffs, image, debug, title_future, notes = detect_staffs_in_image(image_path, config)
+            multi_staffs, image, debug, title_future, notes, staffs, original_image = detect_staffs_in_image(image_path, config)
         debug_cleanup = debug
 
         transformer_config = Config()
@@ -210,9 +220,36 @@ def process_image(
             staff_position_files = replace_extension(image_path, ".txt")
             save_staff_positions(multi_staffs, image.shape, staff_position_files)
         debug.write_teaser(teaser_file, multi_staffs)
-        if config.visualize and len(notes) > 0:
-            debug.write_notes_visualization(multi_staffs, notes)
-            eprint("Visualization written to", replace_extension(image_path, "_notes.png"))
+
+        # Detect accidentals with YOLOv10
+        if config.detect_accidentals and len(staffs) > 0 and original_image is not None:
+            model_path = get_accidental_model_path()
+            if os.path.exists(model_path):
+                eprint("Detecting accidentals with YOLOv10...")
+                accidentals = detect_and_position_accidentals(
+                    image=original_image,
+                    staffs=staffs,
+                    model_path=model_path,
+                    confidence_threshold=0.3,
+                )
+                eprint(f"Found {len(accidentals)} accidentals")
+            else:
+                eprint("Accidental detection model not found, skipping accidental detection")
+
+        # Write visualizations
+        if config.visualize:
+            if len(notes) > 0:
+                debug.write_notes_visualization(multi_staffs, notes)
+                eprint("Notes visualization written to", replace_extension(image_path, "_notes.png"))
+
+            if len(accidentals) > 0:
+                debug.write_accidentals_visualization(multi_staffs, accidentals)
+                eprint("Accidentals visualization written to", replace_extension(image_path, "_accidentals.png"))
+
+                # Write combined visualization
+                debug.write_full_visualization(multi_staffs, notes, accidentals)
+                eprint("Full visualization written to", replace_extension(image_path, "_full.png"))
+
         debug.clean_debug_files_from_previous_runs()
 
         eprint("Result was written to", xml_file)
@@ -227,7 +264,7 @@ def process_image(
 
 def detect_staffs_in_image(
     image_path: str, config: ProcessingConfig
-) -> tuple[list[MultiStaff], NDArray, Debug, Future[str], list[Note]]:
+) -> tuple[list[MultiStaff], NDArray, Debug, Future[str], list[Note], list[Staff], NDArray]:
     predictions, debug = load_and_preprocess_predictions(
         image_path, config.enable_debug, config.enable_cache, config.use_gpu_inference
     )
@@ -289,7 +326,7 @@ def detect_staffs_in_image(
 
     debug.write_all_bounding_boxes_alternating_colors("notes", multi_staffs, notes)
 
-    return multi_staffs, predictions.preprocessed, debug, title_future, notes
+    return multi_staffs, predictions.preprocessed, debug, title_future, notes, staffs, predictions.original
 
 
 def get_all_image_files_in_folder(folder: str) -> list[str]:
@@ -383,6 +420,11 @@ def main() -> None:
         help="Output a visualization image showing detected notes overlaid on the original",
     )
     parser.add_argument(
+        "--no-accidentals",
+        action="store_true",
+        help="Disable YOLOv10 accidental detection",
+    )
+    parser.add_argument(
         "--read-staff-positions",
         action="store_true",
         help="Reads the position of all staffs from a txt file instead"
@@ -417,6 +459,7 @@ def main() -> None:
         -1,
         use_gpu_inference,
         args.visualize,
+        detect_accidentals=not args.no_accidentals,
     )
 
     xml_generator_args = XmlGeneratorArguments(
