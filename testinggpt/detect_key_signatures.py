@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
 """
 PRODUCTION VERSION: GPT-4o Key Signature Detection
-Focuses on left side key signature area for accurate detection
-TESTED: Correctly identifies G major (1 sharp)
+Integrates with Orchestra-AI-2 pipeline to:
+1. Run Orchestra-AI-2 to extract first measures with staff lines removed
+2. Detect key signatures using GPT-4o
+3. Save results
 """
 
 import os
+import sys
 import json
 import base64
+import subprocess
 from pathlib import Path
 from datetime import datetime
 from openai import OpenAI
 from dotenv import load_dotenv
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
+import cv2
+import numpy as np
 
 load_dotenv()
 client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
@@ -160,7 +166,7 @@ Now analyze the LEFT SIDE ONLY:"""
         return None
 
 
-def detect_key_signature_single_measure(image_path, model="gpt-4o", verbose=True):
+def detect_key_signature_single_measure(image_path, model="gpt-4o", verbose=True, show_image=True):
     """
     Detect key signature from a single first measure image (staff lines removed)
 
@@ -168,12 +174,31 @@ def detect_key_signature_single_measure(image_path, model="gpt-4o", verbose=True
         image_path: Path to first measure image
         model: GPT model to use (default: gpt-4o)
         verbose: Print progress messages
+        show_image: Display the image being analyzed
 
     Returns:
         str: Key signature (e.g., "G", "C", "F") or None on error
     """
     if verbose:
         print(f"Analyzing: {Path(image_path).name}")
+
+    # Display the image being analyzed
+    if show_image:
+        img = cv2.imread(image_path)
+        if img is not None:
+            # Add title to image
+            h, w = img.shape[:2]
+            display_img = np.ones((h + 40, w, 3), dtype=np.uint8) * 255
+            display_img[40:, :] = img
+            title = f"Processing: {Path(image_path).name}"
+            cv2.putText(display_img, title, (10, 28), cv2.FONT_HERSHEY_SIMPLEX,
+                       0.6, (0, 0, 0), 1, cv2.LINE_AA)
+
+            # Create temporary preview file
+            preview_path = Path(image_path).parent / "current_measure_preview.png"
+            cv2.imwrite(str(preview_path), display_img)
+            if verbose:
+                print(f"  Preview saved: {preview_path}")
 
     # Prepare image
     hq_image_path, size_mb = prepare_image(image_path)
@@ -265,8 +290,180 @@ RESPONSE: Return ONLY the key signature letter(s) (e.g., "G" or "C" or "Bb"), no
         return None
 
 
-def process_first_measures(folder_path="../Orchestra-AI-2/output/first_measures_staff_removed", output_folder="results"):
-    """Process first measure images with staff lines removed and detect key signatures"""
+def run_orchestra_ai2(input_folder, output_folder=None):
+    """
+    Run Orchestra-AI-2 pipeline to extract first measures with staff lines removed
+
+    Args:
+        input_folder: Folder containing sheet music images to process
+        output_folder: Where Orchestra-AI-2 will save results (defaults to Orchestra-AI-2/output)
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    # Find Orchestra-AI-2 directory (search common locations)
+    possible_paths = [
+        Path("/Users/asherzaczepinski/Desktop/Orchestra-AI-2"),  # Common location
+        Path(__file__).parent.parent / "Orchestra-AI-2",  # Relative to script
+    ]
+
+    orchestra_dir = None
+    for path in possible_paths:
+        if (path / "main.py").exists():
+            orchestra_dir = path
+            break
+
+    if orchestra_dir is None:
+        print(f"✗ Error: Orchestra-AI-2 directory not found")
+        return False
+
+    main_script = orchestra_dir / "main.py"
+
+    # Default output folder
+    if output_folder is None:
+        output_folder = str(orchestra_dir / "output")
+
+    if not main_script.exists():
+        print(f"✗ Error: Orchestra-AI-2 main.py not found at {main_script}")
+        return False
+
+    # Convert paths to absolute paths
+    input_folder = str(Path(input_folder).resolve())
+    output_folder = str(Path(output_folder).resolve())
+
+    print(f"\n{'='*60}")
+    print("RUNNING ORCHESTRA-AI-2 PIPELINE")
+    print(f"{'='*60}")
+    print(f"Input: {input_folder}")
+    print(f"Output: {output_folder}")
+    print(f"{'='*60}\n")
+
+    try:
+        # Run Orchestra-AI-2 main.py with the input and output folders
+        result = subprocess.run(
+            [sys.executable, str(main_script), input_folder, output_folder],
+            cwd=str(orchestra_dir),
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        print(result.stdout)
+        if result.stderr:
+            print(result.stderr)
+
+        print(f"\n✓ Orchestra-AI-2 pipeline completed successfully!\n")
+        return True
+
+    except subprocess.CalledProcessError as e:
+        print(f"✗ Orchestra-AI-2 pipeline failed with exit code {e.returncode}")
+        print(f"stdout: {e.stdout}")
+        print(f"stderr: {e.stderr}")
+        return False
+    except Exception as e:
+        print(f"✗ Error running Orchestra-AI-2: {e}")
+        return False
+
+
+def create_first_measures_visualization(image_files, results, output_folder):
+    """
+    Create a visualization showing all first measures with their detected key signatures
+
+    Args:
+        image_files: List of Path objects for first measure images
+        results: List of detection results with staff numbers and key signatures
+        output_folder: Where to save the visualization
+    """
+    if not image_files or not results:
+        return
+
+    # Create a mapping of staff number to key signature
+    staff_to_key = {r['staff_number']: r['key_signature'] for r in results if r['success']}
+
+    # Load all images
+    images = []
+    max_width = 0
+    total_height = 0
+
+    for img_file in sorted(image_files):
+        # Extract staff number from filename
+        staff_num = int(img_file.stem.split('_')[1])
+
+        # Load image
+        img = cv2.imread(str(img_file))
+        if img is None:
+            continue
+
+        # Get key signature for this staff
+        key_sig = staff_to_key.get(staff_num, "Unknown")
+
+        # Add text label to image
+        label_height = 40
+        labeled_img = np.ones((img.shape[0] + label_height, img.shape[1], 3), dtype=np.uint8) * 255
+        labeled_img[label_height:, :] = img
+
+        # Add text
+        text = f"Staff {staff_num}: {key_sig} major"
+        cv2.putText(labeled_img, text, (10, 28), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8, (0, 0, 255), 2, cv2.LINE_AA)
+
+        images.append(labeled_img)
+        max_width = max(max_width, labeled_img.shape[1])
+        total_height += labeled_img.shape[0] + 10  # 10px spacing
+
+    # Create composite image
+    composite = np.ones((total_height, max_width, 3), dtype=np.uint8) * 255
+
+    current_y = 0
+    for img in images:
+        h = img.shape[0]
+        composite[current_y:current_y + h, :img.shape[1]] = img
+        current_y += h + 10
+
+    # Save visualization
+    vis_path = Path(output_folder) / f"first_measures_visualization_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+    cv2.imwrite(str(vis_path), composite)
+    print(f"✓ Visualization saved to: {vis_path}")
+
+
+def process_first_measures(folder_path=None, output_folder="results", run_pipeline=False, input_folder=None):
+    """
+    Process first measure images with staff lines removed and detect key signatures
+
+    Args:
+        folder_path: Path to folder containing first measure images (staff lines removed)
+        output_folder: Where to save key signature detection results
+        run_pipeline: If True, run Orchestra-AI-2 pipeline first to generate first measures
+        input_folder: Input folder for Orchestra-AI-2 (required if run_pipeline=True)
+    """
+
+    # Step 1: Run Orchestra-AI-2 pipeline if requested
+    if run_pipeline:
+        if not input_folder:
+            print("✗ Error: input_folder must be specified when run_pipeline=True")
+            return
+
+        success = run_orchestra_ai2(input_folder)
+        if not success:
+            print("✗ Failed to run Orchestra-AI-2 pipeline")
+            return
+
+    # Step 2: Process the generated first measures
+    # Default folder path if not specified
+    if folder_path is None:
+        # Search for Orchestra-AI-2 output directory
+        possible_paths = [
+            Path("/Users/asherzaczepinski/Desktop/Orchestra-AI-2/output/first_measures_staff_removed"),
+            Path(__file__).parent.parent / "Orchestra-AI-2/output/first_measures_staff_removed",
+        ]
+        for path in possible_paths:
+            if path.exists():
+                folder_path = str(path)
+                break
+
+        if folder_path is None:
+            print("✗ Error: Could not find first_measures_staff_removed directory")
+            return
 
     folder = Path(folder_path)
     output = Path(output_folder)
@@ -279,6 +476,9 @@ def process_first_measures(folder_path="../Orchestra-AI-2/output/first_measures_
         print(f"No first measure images found in {folder}/")
         return
 
+    print(f"\n{'='*60}")
+    print("GPT-4O KEY SIGNATURE DETECTION")
+    print(f"{'='*60}")
     print(f"Processing {len(image_files)} first measure(s)...")
     print("=" * 60)
 
@@ -287,8 +487,8 @@ def process_first_measures(folder_path="../Orchestra-AI-2/output/first_measures_
         # Extract staff number from filename
         staff_num = img_file.stem.split('_')[1]
 
-        # Detect key signature for this measure
-        key_sig = detect_key_signature_single_measure(str(img_file), verbose=True)
+        # Detect key signature for this measure (show each image as it's processed)
+        key_sig = detect_key_signature_single_measure(str(img_file), verbose=True, show_image=True)
 
         results.append({
             'staff_number': int(staff_num),
@@ -305,6 +505,10 @@ def process_first_measures(folder_path="../Orchestra-AI-2/output/first_measures_
         json.dump(results, f, indent=2)
 
     print(f"\n✓ Results saved to: {output_file}\n")
+
+    # Create visualization of all first measures with key signatures
+    print("Creating visualization...")
+    create_first_measures_visualization(image_files, results, output)
 
     # Summary
     print("SUMMARY:")
@@ -362,5 +566,42 @@ def batch_process(folder_path="test_images", output_folder="results"):
 
 
 if __name__ == "__main__":
-    # Process first measures with staff lines removed
-    process_first_measures()
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description='Detect key signatures from sheet music using Orchestra-AI-2 + GPT-4o'
+    )
+    parser.add_argument(
+        'input',
+        type=str,
+        help='Input folder containing sheet music images'
+    )
+    parser.add_argument(
+        '--output',
+        type=str,
+        default='results',
+        help='Output folder for results JSON'
+    )
+    parser.add_argument(
+        '--skip-pipeline',
+        action='store_true',
+        help='Skip Orchestra-AI-2 and only process existing first measures'
+    )
+
+    args = parser.parse_args()
+
+    if args.skip_pipeline:
+        # Just process existing first measures
+        print("Processing existing first measures (skipping Orchestra-AI-2 pipeline)\n")
+        process_first_measures(
+            output_folder=args.output,
+            run_pipeline=False
+        )
+    else:
+        # Run full pipeline (default behavior)
+        print("Running full pipeline: Orchestra-AI-2 → GPT-4o key signature detection\n")
+        process_first_measures(
+            output_folder=args.output,
+            run_pipeline=True,
+            input_folder=args.input
+        )
