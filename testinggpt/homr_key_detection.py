@@ -276,6 +276,107 @@ def process_image_with_homr(image_path, output_folder="testinggpt/results"):
             cv2.imwrite(str(key_sig_region_path), key_sig_region_img)
             print(f"    ✓ Saved key signature region: {key_sig_region_path}")
 
+            # Create version with HOMR notes highlighted
+            key_sig_with_notes = key_sig_region_img.copy()
+
+            # Find all notes/noteheads within the key signature region
+            notes_in_region = []
+            for notehead in symbols.noteheads:
+                note_center_x, note_center_y = notehead.center
+                # Check if note is within the key signature region bounds
+                if (key_sig_left <= note_center_x <= key_sig_right and
+                    key_sig_top <= note_center_y <= key_sig_bottom):
+                    notes_in_region.append(notehead)
+
+            print(f"    Found {len(notes_in_region)} note(s) in key signature region")
+
+            # Draw blue highlights around each note
+            for note in notes_in_region:
+                # Get bounding box corners
+                box_points = cv2.boxPoints(note.box).astype(np.int32)
+
+                # Adjust coordinates relative to the cropped key signature region
+                adjusted_points = []
+                for pt in box_points:
+                    adjusted_pt = (int(pt[0] - key_sig_left), int(pt[1] - key_sig_top))
+                    adjusted_points.append(adjusted_pt)
+
+                # Draw blue filled rectangle with transparency
+                adjusted_points_np = np.array(adjusted_points, dtype=np.int32)
+
+                # Create overlay for transparency
+                overlay = key_sig_with_notes.copy()
+                cv2.fillPoly(overlay, [adjusted_points_np], (255, 200, 0))  # Blue fill
+                cv2.addWeighted(overlay, 0.3, key_sig_with_notes, 0.7, 0, key_sig_with_notes)
+
+                # Draw blue outline
+                cv2.polylines(key_sig_with_notes, [adjusted_points_np], True, (255, 0, 0), 2)
+
+            # Save key signature region with notes highlighted
+            key_sig_with_notes_path = output_path / f"staff_{staff_idx + 1}_key_signature_with_notes.png"
+            cv2.imwrite(str(key_sig_with_notes_path), key_sig_with_notes)
+            print(f"    ✓ Saved key signature with notes: {key_sig_with_notes_path}")
+
+            # Create even more concise region based on first note position
+            if notes_in_region:
+                # Sort notes by x position to find the leftmost note
+                notes_sorted_by_x = sorted(notes_in_region, key=lambda n: n.center[0])
+                first_note = notes_sorted_by_x[0]
+
+                # Calculate the first note's width
+                first_note_box = cv2.boxPoints(first_note.box)
+                first_note_left = int(min([pt[0] for pt in first_note_box]))
+                first_note_right = int(max([pt[0] for pt in first_note_box]))
+                first_note_width = first_note_right - first_note_left
+
+                # New concise region: starts at original left, ends at (first_note_left - note_width)
+                # This keeps the sharps/flats and cuts off right before the first note
+                concise_left = key_sig_left
+                concise_right = max(key_sig_left, first_note_left - first_note_width)
+                concise_top = key_sig_top
+                concise_bottom = key_sig_bottom
+
+                print(f"    First note at x={first_note_left}, width={first_note_width}")
+                print(f"    Even more concise region: x={concise_left}-{concise_right}, y={concise_top}-{concise_bottom}")
+
+                # DEBUG: Create visualization showing the even more concise box on the original region
+                debug_region_with_box = key_sig_region_img.copy()
+
+                # Calculate box coordinates relative to the key_sig_region_img
+                box_left_rel = concise_left - key_sig_left
+                box_right_rel = concise_right - key_sig_left
+                box_top_rel = 0  # Same top
+                box_bottom_rel = key_sig_region_img.shape[0]  # Same bottom
+
+                # Draw red rectangle showing where the even more concise region is
+                cv2.rectangle(debug_region_with_box,
+                             (box_left_rel, box_top_rel),
+                             (box_right_rel, box_bottom_rel),
+                             (0, 0, 255), 3)  # Red box
+
+                # Add label
+                cv2.putText(debug_region_with_box, "EVEN MORE CONCISE",
+                           (box_left_rel + 5, 20),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+
+                # Save debug visualization
+                debug_path = output_path / f"staff_{staff_idx + 1}_DEBUG_concise_with_box.png"
+                cv2.imwrite(str(debug_path), debug_region_with_box)
+                print(f"    ✓ DEBUG: Saved concise region with box: {debug_path}")
+
+                # Extract the even more concise region
+                concise_region_img = original[concise_top:concise_bottom, concise_left:concise_right].copy()
+
+                # Save even more concise region
+                concise_region_path = output_path / f"staff_{staff_idx + 1}_key_signature_evenmoreconcise.png"
+                cv2.imwrite(str(concise_region_path), concise_region_img)
+                print(f"    ✓ Saved even more concise region: {concise_region_path}")
+
+                # Use this concise region for GPT analysis
+                key_sig_region_path = concise_region_path
+            else:
+                print(f"    No notes found, keeping original region for GPT")
+
             # Draw the biggest clef on the FULL first measure image
             clef_x = int(clef.center[0] - left_x)
             clef_y = int(clef.center[1] - staff_top)
