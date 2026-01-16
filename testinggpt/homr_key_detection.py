@@ -50,15 +50,14 @@ def detect_key_signature_gpt(image_path, model="gpt-4o", verbose=True):
     # Encode
     base64_image = encode_image(image_path)
 
-    prompt = """Look at this single staff from sheet music.
+    prompt = """Look at this key signature region from sheet music.
 
-CRITICAL: Look at the area RIGHT AFTER the clef symbol on the LEFT side.
+CRITICAL: Look at the sharps (#) or flats (♭) immediately after the left edge (where the clef was).
 
 INSTRUCTIONS:
-1. Identify the clef symbol (treble or bass)
-2. Count ONLY the sharps (#) or flats (♭) immediately after the clef (this is the key signature)
-3. IGNORE any accidentals in the middle of the measure
-4. Map to key name using the chart below
+1. Count ONLY the sharps (#) or flats (♭) symbols in the key signature area
+2. IGNORE any accidentals that appear later in the music
+3. Map the count to the key name using the chart below
 
 KEY SIGNATURE CHART:
 - 0 sharps/flats = C
@@ -75,7 +74,9 @@ KEY SIGNATURE CHART:
 - 5 flats = Db
 - 6 flats = Gb
 
-RESPONSE: Return ONLY the key signature letter(s) (e.g., "G" or "C" or "Bb"), nothing else."""
+RESPONSE: Return ONLY the key signature letter(s) (e.g., "G" or "C" or "Bb"), nothing else.
+
+Example: If you see 2 sharp symbols, return "D"."""
 
     try:
         response = client.chat.completions.create(
@@ -259,14 +260,58 @@ def process_image_with_homr(image_path, output_folder="testinggpt/results"):
             print(f"    Biggest clef size: {biggest_clef.size[0]:.1f}x{biggest_clef.size[1]:.1f}")
             measure_clefs = [biggest_clef]  # Only keep the biggest one
 
-        # Draw the biggest clef on the image
-        for clef in measure_clefs:
-            # Adjust coordinates relative to the cropped image
+        # Extract key signature region based on clef position
+        key_sig_region_img = None
+        key_sig_region_path = None
+
+        if measure_clefs:
+            clef = measure_clefs[0]  # The biggest clef
+
+            # Get clef dimensions
+            clef_width = clef.size[0]
+            clef_height = clef.size[1]
+
+            # Get the bounding box corners
+            box_points = cv2.boxPoints(clef.box).astype(np.int32)
+
+            # Find rightmost x coordinate of the clef
+            clef_right_x = int(max([pt[0] for pt in box_points]))
+
+            # Find top and bottom y coordinates of the clef
+            clef_top_y = int(min([pt[1] for pt in box_points]))
+            clef_bottom_y = int(max([pt[1] for pt in box_points]))
+
+            # Calculate key signature region bounds
+            # Start from right edge of clef, go 4 clef widths to the right
+            key_sig_left = clef_right_x
+            key_sig_right = int(clef_right_x + 4 * clef_width)
+
+            # Vertical bounds: 1/4 clef height above and below
+            key_sig_top = int(clef_top_y - 0.25 * clef_height)
+            key_sig_bottom = int(clef_bottom_y + 0.25 * clef_height)
+
+            # Ensure bounds are within image
+            key_sig_left = max(0, key_sig_left)
+            key_sig_right = min(original.shape[1], key_sig_right)
+            key_sig_top = max(0, key_sig_top)
+            key_sig_bottom = min(original.shape[0], key_sig_bottom)
+
+            print(f"    Key signature region: x={key_sig_left}-{key_sig_right}, y={key_sig_top}-{key_sig_bottom}")
+            print(f"    Region size: {key_sig_right - key_sig_left}x{key_sig_bottom - key_sig_top}")
+
+            # Extract key signature region
+            key_sig_region_img = original[key_sig_top:key_sig_bottom, key_sig_left:key_sig_right].copy()
+
+            # Save key signature region
+            key_sig_region_path = output_path / f"staff_{staff_idx + 1}_key_signature_region.png"
+            cv2.imwrite(str(key_sig_region_path), key_sig_region_img)
+            print(f"    ✓ Saved key signature region: {key_sig_region_path}")
+
+            # Draw the biggest clef on the FULL first measure image
             clef_x = int(clef.center[0] - left_x)
             clef_y = int(clef.center[1] - staff_top)
 
             # Draw bounding box around clef
-            box_points = cv2.boxPoints(clef.box).astype(np.int32)
             adjusted_points = []
             for pt in box_points:
                 adjusted_pt = (int(pt[0] - left_x), int(pt[1] - staff_top))
@@ -283,14 +328,29 @@ def process_image_with_homr(image_path, output_folder="testinggpt/results"):
             cv2.putText(first_measure_img, "CLEF", (clef_x - 30, clef_y - 15),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
+            # Draw key signature region rectangle on first measure
+            key_sig_rect_adjusted = [
+                (key_sig_left - left_x, key_sig_top - staff_top),
+                (key_sig_right - left_x, key_sig_top - staff_top),
+                (key_sig_right - left_x, key_sig_bottom - staff_top),
+                (key_sig_left - left_x, key_sig_bottom - staff_top)
+            ]
+            key_sig_rect_np = np.array(key_sig_rect_adjusted, dtype=np.int32)
+            cv2.polylines(first_measure_img, [key_sig_rect_np], True, (255, 0, 255), 2)
+            cv2.putText(first_measure_img, "KEY SIG", (key_sig_left - left_x + 5, key_sig_top - staff_top - 5),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 2)
+
         # Save first measure image with clef annotations
         measure_path = output_path / f"staff_{staff_idx + 1}_first_measure.png"
         cv2.imwrite(str(measure_path), first_measure_img)
-        print(f"    ✓ Saved: {measure_path}")
+        print(f"    ✓ Saved first measure: {measure_path}")
 
-        # Step 3: Detect key signature with GPT
+        # Step 3: Detect key signature with GPT using the focused key signature region
         print(f"    Detecting key signature with GPT...")
-        key_sig = detect_key_signature_gpt(str(measure_path), verbose=True)
+        if key_sig_region_path:
+            key_sig = detect_key_signature_gpt(str(key_sig_region_path), verbose=True)
+        else:
+            key_sig = detect_key_signature_gpt(str(measure_path), verbose=True)
 
         results.append({
             'staff_number': staff_idx + 1,
