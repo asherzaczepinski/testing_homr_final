@@ -17,7 +17,7 @@ sys.path.insert(0, str(orchestra_path))
 
 # Import Orchestra-AI-2 modules
 from preprocessing import *
-from staff_removal import get_staff_lines, cut_image_into_buckets, get_ref_lines, detect_measure_lines_bounded
+from staff_removal import get_staff_lines, cut_image_into_buckets, get_ref_lines, detect_measure_lines_bounded, remove_staff_lines
 
 # Import our GPT detector
 from detect_key_signatures import detect_key_signatures
@@ -74,7 +74,8 @@ def extract_first_measures_with_orchestra_ai(image_path, output_dir="first_measu
     print("Preprocessing image...")
     img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    # Binarize
+    # Binarize - BINARY_INV makes black notation -> 255, white background -> 0
+    # This is needed for proper staff line detection
     _, img_binary = cv2.threshold(img_gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
     height, width = img_binary.shape
@@ -91,6 +92,13 @@ def extract_first_measures_with_orchestra_ai(image_path, output_dir="first_measu
 
     for i, (top_idx, bottom_idx) in enumerate(staves):
         print(f"  Staff {i+1}: lines {top_idx}-{bottom_idx} (y={staff_lines[top_idx]}-{staff_lines[bottom_idx]})")
+
+    # Remove staff lines from FULL image (like Orchestra-AI-2 does)
+    print("\nRemoving staff lines from full image...")
+    # Need to invert for remove_staff_lines: staff lines = 0, background = 255
+    img_binary_inverted = 255 - img_binary
+    cleaned_full = remove_staff_lines(img_binary_inverted.copy(), width, staff_lines, staff_lines_thicknesses)
+    print(f"✓ Staff lines removed from full image")
 
     # Extract first measure for each staff
     # Simplified: just take first 400 pixels (first measure area)
@@ -113,23 +121,51 @@ def extract_first_measures_with_orchestra_ai(image_path, output_dir="first_measu
         crop_left = 0
         crop_right = min(width, first_measure_width)
 
-        # Crop the first measure (use original color image)
-        cropped = img[crop_top:crop_bottom, crop_left:crop_right].copy()
+        # Crop the first measure from the binary image for staff removal
+        cropped_binary = img_binary[crop_top:crop_bottom, crop_left:crop_right].copy()
 
-        # Highlight top and bottom staff lines in RED
-        # Calculate relative y positions in cropped image
-        top_line_y_cropped = top_y - crop_top
-        bottom_line_y_cropped = bottom_y - crop_top
+        # Get staff lines within this cropped region (adjust coordinates)
+        staff_lines_in_crop = []
+        staff_thicknesses_in_crop = []
 
-        # Draw red horizontal lines
-        cv2.line(cropped, (0, top_line_y_cropped), (cropped.shape[1], top_line_y_cropped), (0, 0, 255), 3)
-        cv2.line(cropped, (0, bottom_line_y_cropped), (cropped.shape[1], bottom_line_y_cropped), (0, 0, 255), 3)
+        for line_idx in range(top_line_idx, bottom_line_idx + 1):
+            # Adjust staff line position relative to crop
+            actual_line_y = staff_lines[line_idx]
+            adjusted_line_y = actual_line_y - crop_top
 
-        print(f"  ✓ Highlighted top line at y={top_y}, bottom line at y={bottom_y}")
+            # Only include if the line and its thickness fit within the crop
+            line_thickness = staff_lines_thicknesses[line_idx]
+            line_end_y = adjusted_line_y + line_thickness - 1
+
+            if 0 <= adjusted_line_y < cropped_binary.shape[0] and line_end_y < cropped_binary.shape[0]:
+                staff_lines_in_crop.append(adjusted_line_y)
+                staff_thicknesses_in_crop.append(line_thickness)
+
+        print(f"  ✓ Found {len(staff_lines_in_crop)} staff lines in crop")
+
+        # Remove staff lines from the cropped binary image
+        # remove_staff_lines expects: staff lines = 0 (black), background = 255 (white)
+        # But our img_binary has: staff lines = 255, background = 0
+        # So we need to invert before passing to remove_staff_lines
+        if len(staff_lines_in_crop) > 0:
+            # Invert: 255 -> 0, 0 -> 255
+            cropped_inverted = 255 - cropped_binary
+            cropped_staff_removed = remove_staff_lines(
+                cropped_inverted.copy(),
+                cropped_inverted.shape[1],
+                staff_lines_in_crop,
+                staff_thicknesses_in_crop
+            )
+            print(f"  ✓ Staff lines removed")
+        else:
+            cropped_staff_removed = 255 - cropped_binary  # Still need to invert
+
+        # Convert to color (now staff_removed has white background, black notes)
+        cropped_final = cv2.cvtColor(cropped_staff_removed, cv2.COLOR_GRAY2BGR)
 
         # Save
         output_path = output_dir / f"staff_{staff_idx+1}_first_measure.png"
-        cv2.imwrite(str(output_path), cropped)
+        cv2.imwrite(str(output_path), cropped_final)
         print(f"  ✓ Saved: {output_path}")
 
         first_measures.append({
