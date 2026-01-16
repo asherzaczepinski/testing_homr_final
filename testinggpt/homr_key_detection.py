@@ -42,7 +42,7 @@ def detect_key_signature_gpt(image_path, model="gpt-4o", verbose=True):
         verbose: Print progress messages
 
     Returns:
-        str: Key signature (e.g., "G", "C", "F") or None on error
+        dict: Dictionary with 'raw_response' containing GPT's text response or None on error
     """
     if verbose:
         print(f"  Analyzing with GPT: {Path(image_path).name}")
@@ -52,31 +52,9 @@ def detect_key_signature_gpt(image_path, model="gpt-4o", verbose=True):
 
     prompt = """Look at this key signature region from sheet music.
 
-CRITICAL: Look at the sharps (#) or flats (♭) immediately after the left edge (where the clef was).
-
 INSTRUCTIONS:
-1. Count ONLY the sharps (#) or flats (♭) symbols in the key signature area
-2. IGNORE any accidentals that appear later in the music
-3. Map the count to the key name using the chart below
-
-KEY SIGNATURE CHART:
-- 0 sharps/flats = C
-- 1 sharp = G
-- 2 sharps = D
-- 3 sharps = A
-- 4 sharps = E
-- 5 sharps = B
-- 6 sharps = F#
-- 1 flat = F
-- 2 flats = Bb
-- 3 flats = Eb
-- 4 flats = Ab
-- 5 flats = Db
-- 6 flats = Gb
-
-RESPONSE: Return ONLY the key signature letter(s) (e.g., "G" or "C" or "Bb"), nothing else.
-
-Example: If you see 2 sharp symbols, return "D"."""
+1. Count the total number of sharp (#) symbols OR flat (♭) symbols you see
+2. Identify whether the FIRST symbol (reading left to right) is a "sharp" or "flat"."""
 
     try:
         response = client.chat.completions.create(
@@ -108,17 +86,8 @@ Example: If you see 2 sharp symbols, return "D"."""
         if verbose:
             print(f"    GPT Response: {raw_response}")
 
-        # Extract key signature
-        key_sig = raw_response.strip('"\'` \n')
-
-        if key_sig:
-            if verbose:
-                print(f"    ✓ Detected key: {key_sig}")
-            return key_sig
-        else:
-            if verbose:
-                print("    ✗ Error: Empty response")
-            return None
+        # Return the raw response text
+        return {"raw_response": raw_response}
 
     except Exception as e:
         if verbose:
@@ -348,19 +317,31 @@ def process_image_with_homr(image_path, output_folder="testinggpt/results"):
         # Step 3: Detect key signature with GPT using the focused key signature region
         print(f"    Detecting key signature with GPT...")
         if key_sig_region_path:
-            key_sig = detect_key_signature_gpt(str(key_sig_region_path), verbose=True)
+            key_sig_result = detect_key_signature_gpt(str(key_sig_region_path), verbose=True)
         else:
-            key_sig = detect_key_signature_gpt(str(measure_path), verbose=True)
+            key_sig_result = detect_key_signature_gpt(str(measure_path), verbose=True)
 
-        results.append({
-            'staff_number': staff_idx + 1,
-            'filename': measure_path.name,
-            'success': key_sig is not None,
-            'key_signature': key_sig,
-            'staff_bounds': {'top': staff_top, 'bottom': staff_bottom, 'left': staff_left, 'right': staff_right},
-            'measure_bounds': {'left': left_x, 'right': right_x},
-            'timestamp': datetime.now().isoformat()
-        })
+        # Extract results
+        if key_sig_result:
+            results.append({
+                'staff_number': staff_idx + 1,
+                'filename': measure_path.name,
+                'success': True,
+                'gpt_response': key_sig_result.get('raw_response', ''),
+                'staff_bounds': {'top': staff_top, 'bottom': staff_bottom, 'left': staff_left, 'right': staff_right},
+                'measure_bounds': {'left': left_x, 'right': right_x},
+                'timestamp': datetime.now().isoformat()
+            })
+        else:
+            results.append({
+                'staff_number': staff_idx + 1,
+                'filename': measure_path.name,
+                'success': False,
+                'gpt_response': None,
+                'staff_bounds': {'top': staff_top, 'bottom': staff_bottom, 'left': staff_left, 'right': staff_right},
+                'measure_bounds': {'left': left_x, 'right': right_x},
+                'timestamp': datetime.now().isoformat()
+            })
 
     # Save results
     results_file = output_path / f"key_signatures_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -376,7 +357,7 @@ def process_image_with_homr(image_path, output_folder="testinggpt/results"):
     print("SUMMARY:")
     for result in results:
         if result['success']:
-            print(f"  ✓ Staff {result['staff_number']}: {result['key_signature']} major")
+            print(f"  ✓ Staff {result['staff_number']}: {result['gpt_response']}")
         else:
             print(f"  ✗ Staff {result['staff_number']}: FAILED")
 
