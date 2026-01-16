@@ -1,0 +1,67 @@
+[
+  {
+    "staff": 1,
+    "key_signature": "G",
+    "image": "testinggpt/first_measures_staff_removed/staff_1_first_measure.png"
+  },
+  {
+    "staff": 2,
+    "key_signature": "A",
+    "image": "testinggpt/first_measures_staff_removed/staff_2_first_measure.png"
+  },
+  {
+    "staff": 3,
+    "key_signature": "G",
+    "image": "testinggpt/first_measures_staff_removed/staff_3_first_measure.png"
+  },
+  {
+    "staff": 4,
+    "key_signature": "A",
+    "image": "testinggpt/first_measures_staff_removed/staff_4_first_measure.png"
+  },
+  {
+    "staff": 5,
+    "key_signature": "A",
+    "image": "testinggpt/first_measures_staff_removed/staff_5_first_measure.png"
+  },
+  {
+    "staff": 6,
+    "key_signature": "G",
+    "image": "testinggpt/first_measures_staff_removed/staff_6_first_measure.png"
+  },
+  {
+    "staff": 7,
+    "key_signature": "G",
+    "image": "testinggpt/first_measures_staff_removed/staff_7_first_measure.png"
+  },
+  {
+    "staff": 8,
+    "key_signature": "G",
+    "image": "testinggpt/first_measures_staff_removed/staff_8_first_measure.png"
+  },
+  {
+    "staff": 9,
+    "key_signature": "G",
+    "image": "testinggpt/first_measures_staff_removed/staff_9_first_measure.png"
+  },
+  {
+    "staff": 10,
+    "key_signature": "G",
+    "image": "testinggpt/first_measures_staff_removed/staff_10_first_measure.png"
+  },
+  {
+    "staff": 11,
+    "key_signature": "G",
+    "image": "testinggpt/first_measures_staff_removed/staff_11_first_measure.png"
+  },
+  {
+    "staff": 12,
+    "key_signature": "D",
+    "image": "testinggpt/first_measures_staff_removed/staff_12_first_measure.png"
+  },
+  {
+    "staff": 13,
+    "key_signature": "C",
+    "image": "testinggpt/first_measures_staff_removed/staff_13_first_measure.png"
+  }
+]
