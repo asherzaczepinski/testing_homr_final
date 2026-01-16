@@ -265,7 +265,7 @@ RESPONSE: Return ONLY the key signature letter(s) (e.g., "G" or "C" or "Bb"), no
         return None
 
 
-def process_first_measures(folder_path="Orchestra-AI-2/output/first_measures_staff_removed", output_folder="results"):
+def process_first_measures(folder_path="../Orchestra-AI-2/output/first_measures_staff_removed", output_folder="results"):
     """Process first measure images with staff lines removed and detect key signatures"""
 
     folder = Path(folder_path)
@@ -362,4 +362,5 @@ def batch_process(folder_path="test_images", output_folder="results"):
 
 
 if __name__ == "__main__":
-    batch_process()
+    # Process first measures with staff lines removed
+    process_first_measures()
