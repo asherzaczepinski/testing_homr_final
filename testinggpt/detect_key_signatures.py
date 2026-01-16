@@ -160,6 +160,161 @@ Now analyze the LEFT SIDE ONLY:"""
         return None
 
 
+def detect_key_signature_single_measure(image_path, model="gpt-4o", verbose=True):
+    """
+    Detect key signature from a single first measure image (staff lines removed)
+
+    Args:
+        image_path: Path to first measure image
+        model: GPT model to use (default: gpt-4o)
+        verbose: Print progress messages
+
+    Returns:
+        str: Key signature (e.g., "G", "C", "F") or None on error
+    """
+    if verbose:
+        print(f"Analyzing: {Path(image_path).name}")
+
+    # Prepare image
+    hq_image_path, size_mb = prepare_image(image_path)
+    if verbose:
+        print(f"Image size: {size_mb:.2f}MB")
+
+    # Encode
+    base64_image = encode_image(hq_image_path)
+
+    # Optimized prompt for single measure
+    prompt = """Look at this single staff first measure image (staff lines removed).
+
+CRITICAL: Look at the area RIGHT AFTER the clef symbol on the LEFT side.
+
+INSTRUCTIONS:
+1. Identify the clef symbol (treble or bass)
+2. Count ONLY the sharps (#) or flats (♭) immediately after the clef (this is the key signature)
+3. IGNORE any accidentals in the middle of the measure
+4. Map to key name using the chart below
+
+KEY SIGNATURE CHART:
+- 0 sharps/flats = C
+- 1 sharp = G
+- 2 sharps = D
+- 3 sharps = A
+- 4 sharps = E
+- 5 sharps = B
+- 6 sharps = F#
+- 1 flat = F
+- 2 flats = Bb
+- 3 flats = Eb
+- 4 flats = Ab
+- 5 flats = Db
+- 6 flats = Gb
+
+RESPONSE: Return ONLY the key signature letter(s) (e.g., "G" or "C" or "Bb"), nothing else."""
+
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": prompt
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{base64_image}",
+                                "detail": "high"
+                            }
+                        }
+                    ]
+                }
+            ],
+            max_completion_tokens=800
+        )
+
+        # Clean up temp file
+        if hq_image_path != image_path and os.path.exists(hq_image_path):
+            os.remove(hq_image_path)
+
+        # Parse response
+        raw_response = response.choices[0].message.content.strip()
+
+        if verbose:
+            print(f"Response: {raw_response}")
+
+        # Extract key signature (should be simple like "G" or "Bb")
+        key_sig = raw_response.strip('"\'` \n')
+
+        if key_sig:
+            if verbose:
+                print(f"✓ Detected key: {key_sig}")
+            return key_sig
+        else:
+            if verbose:
+                print("✗ Error: Empty response")
+            return None
+
+    except Exception as e:
+        if hq_image_path != image_path and os.path.exists(hq_image_path):
+            os.remove(hq_image_path)
+        if verbose:
+            print(f"✗ Error: {e}")
+        return None
+
+
+def process_first_measures(folder_path="Orchestra-AI-2/output/first_measures_staff_removed", output_folder="results"):
+    """Process first measure images with staff lines removed and detect key signatures"""
+
+    folder = Path(folder_path)
+    output = Path(output_folder)
+    output.mkdir(exist_ok=True)
+
+    # Find all first measure images
+    image_files = sorted(folder.glob("staff_*_first_measure_no_lines.png"))
+
+    if not image_files:
+        print(f"No first measure images found in {folder}/")
+        return
+
+    print(f"Processing {len(image_files)} first measure(s)...")
+    print("=" * 60)
+
+    results = []
+    for img_file in image_files:
+        # Extract staff number from filename
+        staff_num = img_file.stem.split('_')[1]
+
+        # Detect key signature for this measure
+        key_sig = detect_key_signature_single_measure(str(img_file), verbose=True)
+
+        results.append({
+            'staff_number': int(staff_num),
+            'filename': img_file.name,
+            'success': key_sig is not None,
+            'key_signature': key_sig,
+            'timestamp': datetime.now().isoformat()
+        })
+        print("-" * 60)
+
+    # Save results
+    output_file = output / f"key_signatures_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    with open(output_file, 'w') as f:
+        json.dump(results, f, indent=2)
+
+    print(f"\n✓ Results saved to: {output_file}\n")
+
+    # Summary
+    print("SUMMARY:")
+    for result in sorted(results, key=lambda x: x['staff_number']):
+        if result['success']:
+            print(f"  ✓ Staff {result['staff_number']}: {result['key_signature']}")
+        else:
+            print(f"  ✗ Staff {result['staff_number']}: FAILED")
+
+
 def batch_process(folder_path="test_images", output_folder="results"):
     """Process all images in folder and save results"""
 
