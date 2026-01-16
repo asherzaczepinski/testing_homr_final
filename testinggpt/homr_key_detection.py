@@ -240,9 +240,50 @@ def process_image_with_homr(image_path, output_folder="testinggpt/results"):
         staff_bottom = min(original.shape[0], staff_bottom)
 
         # Extract first measure image from original
-        first_measure_img = original[staff_top:staff_bottom, left_x:right_x]
+        first_measure_img = original[staff_top:staff_bottom, left_x:right_x].copy()
 
-        # Save first measure image
+        # Find clefs within this first measure
+        measure_clefs = []
+        for clef_box in symbols.clefs_keys:
+            clef_center_x, clef_center_y = clef_box.center
+            # Check if clef is within this first measure bounds
+            if (left_x <= clef_center_x <= right_x and
+                staff_top <= clef_center_y <= staff_bottom):
+                measure_clefs.append(clef_box)
+
+        print(f"    Found {len(measure_clefs)} clef(s) in first measure")
+
+        # Find the biggest clef (by area)
+        if measure_clefs:
+            biggest_clef = max(measure_clefs, key=lambda c: c.size[0] * c.size[1])
+            print(f"    Biggest clef size: {biggest_clef.size[0]:.1f}x{biggest_clef.size[1]:.1f}")
+            measure_clefs = [biggest_clef]  # Only keep the biggest one
+
+        # Draw the biggest clef on the image
+        for clef in measure_clefs:
+            # Adjust coordinates relative to the cropped image
+            clef_x = int(clef.center[0] - left_x)
+            clef_y = int(clef.center[1] - staff_top)
+
+            # Draw bounding box around clef
+            box_points = cv2.boxPoints(clef.box).astype(np.int32)
+            adjusted_points = []
+            for pt in box_points:
+                adjusted_pt = (int(pt[0] - left_x), int(pt[1] - staff_top))
+                adjusted_points.append(adjusted_pt)
+
+            # Draw the rotated rectangle
+            adjusted_points_np = np.array(adjusted_points, dtype=np.int32)
+            cv2.polylines(first_measure_img, [adjusted_points_np], True, (0, 255, 0), 3)
+
+            # Draw center point
+            cv2.circle(first_measure_img, (clef_x, clef_y), 5, (255, 0, 0), -1)
+
+            # Add label
+            cv2.putText(first_measure_img, "CLEF", (clef_x - 30, clef_y - 15),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+        # Save first measure image with clef annotations
         measure_path = output_path / f"staff_{staff_idx + 1}_first_measure.png"
         cv2.imwrite(str(measure_path), first_measure_img)
         print(f"    ✓ Saved: {measure_path}")
