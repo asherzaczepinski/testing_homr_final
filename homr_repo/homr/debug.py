@@ -294,5 +294,5 @@ class Debug:
         filename = self.base_filename + suffix
         if self.debug:
             self._remember_file_name(filename)
-        cv2.imwrite(filename, staff_image)
+            cv2.imwrite(filename, staff_image)
         return filename

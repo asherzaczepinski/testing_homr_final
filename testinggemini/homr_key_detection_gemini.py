@@ -20,6 +20,7 @@ from homr.main import detect_staffs_in_image, ProcessingConfig, load_and_preproc
 from homr.bar_line_detection import detect_bar_lines
 from homr.note_detection import combine_noteheads_with_stems
 from homr.debug import Debug
+from homr.circle_of_fifths import definition, KeyTransformation
 
 # Load environment variables
 load_dotenv(Path(__file__).parent.parent / ".env")
@@ -30,6 +31,49 @@ if not API_KEY:
     raise ValueError("GEMINI_API_KEY not found in environment variables. Please set it in .env file.")
 genai.configure(api_key=API_KEY)
 MODEL_NAME = "gemini-2.0-flash-exp"
+
+# Key signature mappings (sharps = positive, flats = negative)
+# Number of sharps/flats -> Circle of Fifths value
+SHARP_KEYS = {
+    0: ("CM", 0),    # C Major
+    1: ("GM", 1),    # G Major
+    2: ("DM", 2),    # D Major
+    3: ("AM", 3),    # A Major
+    4: ("EM", 4),    # E Major
+    5: ("BM", 5),    # B Major
+    6: ("F#M", 6),   # F# Major
+    7: ("C#M", 7),   # C# Major
+}
+
+FLAT_KEYS = {
+    0: ("CM", 0),    # C Major
+    1: ("FM", -1),   # F Major
+    2: ("BbM", -2),  # Bb Major
+    3: ("EbM", -3),  # Eb Major
+    4: ("AbM", -4),  # Ab Major
+    5: ("DbM", -5),  # Db Major
+    6: ("GbM", -6),  # Gb Major
+    7: ("CbM", -7),  # Cb Major
+}
+
+
+def infer_key_from_signature(count: int, sig_type: str):
+    """
+    Infer the musical key from the number and type of sharps/flats
+
+    Args:
+        count: Number of sharps or flats
+        sig_type: "sharp" or "flat"
+
+    Returns:
+        tuple: (key_name, circle_of_fifth_value)
+    """
+    if sig_type == "sharp":
+        return SHARP_KEYS.get(count, ("Unknown", 0))
+    elif sig_type == "flat":
+        return FLAT_KEYS.get(count, ("Unknown", 0))
+    else:
+        return ("Unknown", 0)
 
 
 def detect_key_signature_gemini(image_path, verbose=True):
@@ -104,12 +148,18 @@ Return your response as JSON in this exact format:
             # Parse JSON
             result = json.loads(json_str)
 
+            # Infer the actual key
+            key_name, circle_of_fifth = infer_key_from_signature(result['count'], result['type'])
+
             if verbose:
                 print(f"    Parsed: {result['count']} {result['type']}(s)")
+                print(f"    Inferred Key: {key_name} (Circle of Fifths: {circle_of_fifth})")
 
             return {
                 "raw_response": raw_response,
-                "parsed": result
+                "parsed": result,
+                "key_name": key_name,
+                "circle_of_fifth": circle_of_fifth
             }
 
         except (json.JSONDecodeError, KeyError) as e:
@@ -453,14 +503,26 @@ def process_image_with_homr(image_path, output_folder="testinggemini/results"):
         else:
             key_sig_result = detect_key_signature_gemini(str(measure_path), verbose=True)
 
-        # Extract results
+        # Extract results and apply key signature to staff
         if key_sig_result:
+            circle_of_fifth = key_sig_result.get('circle_of_fifth', 0)
+            key_name = key_sig_result.get('key_name', 'Unknown')
+
+            # Apply key signature to this staff's notes
+            staff.circle_of_fifth = circle_of_fifth
+            for note in staff.get_notes():
+                note.circle_of_fifth = circle_of_fifth
+
+            print(f"    ✓ Applied key signature {key_name} to staff {staff_idx + 1}")
+
             results.append({
                 'staff_number': staff_idx + 1,
                 'filename': measure_path.name,
                 'success': True,
                 'gemini_raw_response': key_sig_result.get('raw_response', ''),
                 'gemini_parsed': key_sig_result.get('parsed', None),
+                'key_name': key_name,
+                'circle_of_fifth': circle_of_fifth,
                 'staff_bounds': {'top': staff_top, 'bottom': staff_bottom, 'left': staff_left, 'right': staff_right},
                 'measure_bounds': {'left': left_x, 'right': right_x},
                 'timestamp': datetime.now().isoformat()
@@ -492,8 +554,10 @@ def process_image_with_homr(image_path, output_folder="testinggemini/results"):
     for result in results:
         if result['success']:
             parsed = result.get('gemini_parsed')
+            key_name = result.get('key_name', 'Unknown')
+            circle_of_fifth = result.get('circle_of_fifth', 0)
             if parsed:
-                print(f"  ✓ Staff {result['staff_number']}: {parsed['count']} {parsed['type']}(s)")
+                print(f"  ✓ Staff {result['staff_number']}: {parsed['count']} {parsed['type']}(s) → Key: {key_name} (CoF: {circle_of_fifth})")
             else:
                 print(f"  ✓ Staff {result['staff_number']}: {result['gemini_raw_response']}")
         else:

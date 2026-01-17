@@ -1,0 +1,278 @@
+[
+  {
+    "staff_number": 1,
+    "filename": "staff_1_first_measure.png",
+    "success": true,
+    "gemini_raw_response": "```json\n{\n  \"count\": 1,\n  \"type\": \"sharp\"\n}\n```",
+    "gemini_parsed": {
+      "count": 1,
+      "type": "sharp"
+    },
+    "key_name": "GM",
+    "circle_of_fifth": 1,
+    "staff_bounds": {
+      "top": 266,
+      "bottom": 398,
+      "left": 220,
+      "right": 1800
+    },
+    "measure_bounds": {
+      "left": 220,
+      "right": 570
+    },
+    "timestamp": "2026-01-16T17:01:39.845410"
+  },
+  {
+    "staff_number": 2,
+    "filename": "staff_2_first_measure.png",
+    "success": true,
+    "gemini_raw_response": "```json\n{\n  \"count\": 1,\n  \"type\": \"sharp\"\n}\n```",
+    "gemini_parsed": {
+      "count": 1,
+      "type": "sharp"
+    },
+    "key_name": "GM",
+    "circle_of_fifth": 1,
+    "staff_bounds": {
+      "top": 436,
+      "bottom": 574,
+      "left": 130,
+      "right": 1790
+    },
+    "measure_bounds": {
+      "left": 130,
+      "right": 459
+    },
+    "timestamp": "2026-01-16T17:01:40.716640"
+  },
+  {
+    "staff_number": 3,
+    "filename": "staff_3_first_measure.png",
+    "success": true,
+    "gemini_raw_response": "```json\n{\n  \"count\": 1,\n  \"type\": \"sharp\"\n}\n```",
+    "gemini_parsed": {
+      "count": 1,
+      "type": "sharp"
+    },
+    "key_name": "GM",
+    "circle_of_fifth": 1,
+    "staff_bounds": {
+      "top": 614,
+      "bottom": 750,
+      "left": 130,
+      "right": 1790
+    },
+    "measure_bounds": {
+      "left": 130,
+      "right": 627
+    },
+    "timestamp": "2026-01-16T17:01:41.632415"
+  },
+  {
+    "staff_number": 4,
+    "filename": "staff_4_first_measure.png",
+    "success": true,
+    "gemini_raw_response": "```json\n{\n  \"count\": 1,\n  \"type\": \"sharp\"\n}\n```",
+    "gemini_parsed": {
+      "count": 1,
+      "type": "sharp"
+    },
+    "key_name": "GM",
+    "circle_of_fifth": 1,
+    "staff_bounds": {
+      "top": 796,
+      "bottom": 926,
+      "left": 130,
+      "right": 1790
+    },
+    "measure_bounds": {
+      "left": 130,
+      "right": 627
+    },
+    "timestamp": "2026-01-16T17:01:42.454534"
+  },
+  {
+    "staff_number": 5,
+    "filename": "staff_5_first_measure.png",
+    "success": true,
+    "gemini_raw_response": "```json\n{\n  \"count\": 1,\n  \"type\": \"sharp\"\n}\n```",
+    "gemini_parsed": {
+      "count": 1,
+      "type": "sharp"
+    },
+    "key_name": "GM",
+    "circle_of_fifth": 1,
+    "staff_bounds": {
+      "top": 975,
+      "bottom": 1102,
+      "left": 130,
+      "right": 1790
+    },
+    "measure_bounds": {
+      "left": 130,
+      "right": 637
+    },
+    "timestamp": "2026-01-16T17:01:43.188420"
+  },
+  {
+    "staff_number": 6,
+    "filename": "staff_6_first_measure.png",
+    "success": true,
+    "gemini_raw_response": "```json\n{\n  \"count\": 1,\n  \"type\": \"sharp\"\n}\n```",
+    "gemini_parsed": {
+      "count": 1,
+      "type": "sharp"
+    },
+    "key_name": "GM",
+    "circle_of_fifth": 1,
+    "staff_bounds": {
+      "top": 1154,
+      "bottom": 1278,
+      "left": 130,
+      "right": 1790
+    },
+    "measure_bounds": {
+      "left": 130,
+      "right": 534
+    },
+    "timestamp": "2026-01-16T17:01:43.915252"
+  },
+  {
+    "staff_number": 7,
+    "filename": "staff_7_first_measure.png",
+    "success": true,
+    "gemini_raw_response": "```json\n{\n  \"count\": 1,\n  \"type\": \"sharp\"\n}\n```",
+    "gemini_parsed": {
+      "count": 1,
+      "type": "sharp"
+    },
+    "key_name": "GM",
+    "circle_of_fifth": 1,
+    "staff_bounds": {
+      "top": 1330,
+      "bottom": 1454,
+      "left": 130,
+      "right": 1790
+    },
+    "measure_bounds": {
+      "left": 130,
+      "right": 602
+    },
+    "timestamp": "2026-01-16T17:01:44.695742"
+  },
+  {
+    "staff_number": 8,
+    "filename": "staff_8_first_measure.png",
+    "success": true,
+    "gemini_raw_response": "```json\n{\n  \"count\": 1,\n  \"type\": \"sharp\"\n}\n```",
+    "gemini_parsed": {
+      "count": 1,
+      "type": "sharp"
+    },
+    "key_name": "GM",
+    "circle_of_fifth": 1,
+    "staff_bounds": {
+      "top": 1506,
+      "bottom": 1631,
+      "left": 130,
+      "right": 1790
+    },
+    "measure_bounds": {
+      "left": 130,
+      "right": 456
+    },
+    "timestamp": "2026-01-16T17:01:45.429250"
+  },
+  {
+    "staff_number": 9,
+    "filename": "staff_9_first_measure.png",
+    "success": true,
+    "gemini_raw_response": "```json\n{\n  \"count\": 1,\n  \"type\": \"sharp\"\n}\n```",
+    "gemini_parsed": {
+      "count": 1,
+      "type": "sharp"
+    },
+    "key_name": "GM",
+    "circle_of_fifth": 1,
+    "staff_bounds": {
+      "top": 1683,
+      "bottom": 1807,
+      "left": 130,
+      "right": 1790
+    },
+    "measure_bounds": {
+      "left": 130,
+      "right": 620
+    },
+    "timestamp": "2026-01-16T17:01:46.254210"
+  },
+  {
+    "staff_number": 10,
+    "filename": "staff_10_first_measure.png",
+    "success": true,
+    "gemini_raw_response": "```json\n{\n  \"count\": 1,\n  \"type\": \"sharp\"\n}\n```",
+    "gemini_parsed": {
+      "count": 1,
+      "type": "sharp"
+    },
+    "key_name": "GM",
+    "circle_of_fifth": 1,
+    "staff_bounds": {
+      "top": 1860,
+      "bottom": 1986,
+      "left": 120,
+      "right": 1790
+    },
+    "measure_bounds": {
+      "left": 120,
+      "right": 618
+    },
+    "timestamp": "2026-01-16T17:01:47.176676"
+  },
+  {
+    "staff_number": 11,
+    "filename": "staff_11_first_measure.png",
+    "success": true,
+    "gemini_raw_response": "```json\n{\n  \"count\": 1,\n  \"type\": \"sharp\"\n}\n```",
+    "gemini_parsed": {
+      "count": 1,
+      "type": "sharp"
+    },
+    "key_name": "GM",
+    "circle_of_fifth": 1,
+    "staff_bounds": {
+      "top": 2038,
+      "bottom": 2167,
+      "left": 120,
+      "right": 1790
+    },
+    "measure_bounds": {
+      "left": 120,
+      "right": 626
+    },
+    "timestamp": "2026-01-16T17:01:47.996526"
+  },
+  {
+    "staff_number": 12,
+    "filename": "staff_12_first_measure.png",
+    "success": true,
+    "gemini_raw_response": "```json\n{\n  \"count\": 1,\n  \"type\": \"sharp\"\n}\n```",
+    "gemini_parsed": {
+      "count": 1,
+      "type": "sharp"
+    },
+    "key_name": "GM",
+    "circle_of_fifth": 1,
+    "staff_bounds": {
+      "top": 2219,
+      "bottom": 2349,
+      "left": 120,
+      "right": 1790
+    },
+    "measure_bounds": {
+      "left": 120,
+      "right": 687
+    },
+    "timestamp": "2026-01-16T17:01:48.814983"
+  }
+]
