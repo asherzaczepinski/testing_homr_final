@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 from PIL import Image
 import google.generativeai as genai
+from dotenv import load_dotenv
 
 # Add homr_repo to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "homr_repo"))
@@ -20,8 +21,13 @@ from homr.bar_line_detection import detect_bar_lines
 from homr.note_detection import combine_noteheads_with_stems
 from homr.debug import Debug
 
+# Load environment variables
+load_dotenv(Path(__file__).parent.parent / ".env")
+
 # Configure Gemini API
-API_KEY = "AIzaSyD8NpE9UqviBuIHXQw4DGgkFCYhavcfOII"
+API_KEY = os.getenv('GEMINI_API_KEY')
+if not API_KEY:
+    raise ValueError("GEMINI_API_KEY not found in environment variables. Please set it in .env file.")
 genai.configure(api_key=API_KEY)
 MODEL_NAME = "gemini-2.0-flash-exp"
 
